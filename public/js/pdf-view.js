@@ -919,6 +919,40 @@ async function saveAsNewPdf() {
         drawStickerPdf(page, a, x, yBottom, helv, helvBold, rgb);
       }
     }
+
+    // Bake dirty text-block edits into the PDF.
+    // For each dirty block: draw a white rectangle over the original area
+    // (hides the old text), then draw the new text in its place. If the block
+    // was erased (empty text), just white it out.
+    for (const t of textBlocks) {
+      if (!t.dirty) continue;
+      const page = pages[t.page - 1];
+      if (!page) continue;
+      const { height: ph } = page.getSize();
+      const yBottom = ph - (t.y + t.h);
+      // Whiteout the original text area (with a small margin to cover descenders)
+      const pad = 1;
+      page.drawRectangle({
+        x: t.x - pad, y: yBottom - pad,
+        width: t.w + pad * 2, height: t.h + pad * 2,
+        color: rgb(1, 1, 1), borderColor: rgb(1, 1, 1), borderWidth: 0,
+      });
+      if (t.text && t.text.trim()) {
+        const size = t.fontSize || 12;
+        const lines = wrapText(t.text, t.w, helv, size);
+        let yy = yBottom + t.h - size;
+        for (const ln of lines) {
+          try {
+            page.drawText(ln, { x: t.x, y: yy, size, font: helv, color: rgb(0.1, 0.1, 0.15) });
+          } catch (e) {
+            const safe = ln.replace(/[^\x20-\x7E]/g, "");
+            if (safe) page.drawText(safe, { x: t.x, y: yy, size, font: helv, color: rgb(0.1, 0.1, 0.15) });
+          }
+          yy -= size * 1.2;
+        }
+      }
+    }
+
     saveSignedMetadata(doc, annotations);
     const saved = await doc.save({ useObjectStreams: false });
     // cryptographic signing of the page content (real ECDSA-SHA-256), embedded INTO the
@@ -1100,6 +1134,7 @@ function printPdf() {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
   if (!w) alert("Please allow pop-ups to print the PDF.");
 }
+
 
 // ---- wheel zoom ----
 function attachWheel() {
