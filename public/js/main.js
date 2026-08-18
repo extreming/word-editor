@@ -3,9 +3,10 @@ import {
   attachImageEditing, initTooltips,
   createFindPanel, createTrackChanges, wrapSelectionComment,
   sanitizeHtml, insertHtmlAtCaret, insertTextAtCaret, openPageSetupDialog,
-  openDialog, countWords, saveSelection,
+  openDialog, countWords, saveSelection, restoreSelection,
   insertImage, openTableDialog, openLinkDialog, openSymbolDialog,
   openWordArtDialog, openShapeDialog, insertPageBreak, insertBlankPage,
+  scrollElementIntoEditorView,
 } from "./editor.js";
 import { History } from "./history.js";
 import {
@@ -15,13 +16,31 @@ import {
 import {
   Autosaver, SyncClient, createDocument, getDocument, listDocuments, deleteDocument,
   importDocxFile, putDocx, saveDocument, listVersions, getVersion, restoreVersion,
+  setAuthToken,
 } from "./store.js";
 import { openPdf, closePdf, isPdfMode, getPdfInfo } from "./pdf-view.js";
+import { t, applyI18n, getLocale, setLocale } from "./i18n.js";
 
 const LS_KEY = "word-editor:current-id";
 const LS_USER = "word-editor:user";
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
+// A scoped auth token arrives either in the URL fragment (#token=…, what the
+// SDK's `authToken` init() option uses — fragments are never sent in the
+// HTTP request for this document, so they don't hit access logs or Referer
+// headers) or, for quick manual testing, as a plain ?token= query param.
+// Cleared from the visible URL immediately either way so it doesn't linger
+// in browser history for the lifetime of the tab.
+{
+  const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const urlToken = hashParams.get("token") || params.get("token");
+  if (urlToken) {
+    setAuthToken(urlToken);
+    params.delete("token");
+    const qs = params.toString();
+    history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : ""));
+  }
+}
 
 // page dimensions in inches
 const PAGE_INCHES = {
@@ -32,7 +51,7 @@ const PAGE_GAP = 32; // px between simulated sheets
 
 function setStatus(s) {
   const el = $("save-status");
-  el.textContent = s === "conflict" ? "conflict!" : s;
+  el.textContent = t("status." + s);
   el.className = "status " + s;
 }
 function saveAs(blob, name) {
@@ -62,6 +81,7 @@ function fmtTime(t) {
 // Main app
 // ---------------------------------------------------------------
 async function main() {
+  applyI18n();
   const editor = $("editor");
   const editHistory = new History(editor);
   editHistory.attach();
@@ -83,12 +103,12 @@ async function main() {
     setStatus("error");
     const warn = document.createElement("div");
     warn.className = "banner";
-    warn.textContent = "This browser lacks CompressionStream support; .docx import/export may fail. Use a recent Chrome, Edge, Firefox, or Safari.";
+    warn.textContent = t("warn.noCompressionStream");
     toolbarHost.parentNode.insertBefore(warn, toolbarHost);
   }
 
   // ---- document state ----
-  let current = { id: null, title: "Untitled", pageSetup: { ...DEFAULT_PAGE_SETUP } };
+  let current = { id: null, title: t("doc.untitled"), pageSetup: { ...DEFAULT_PAGE_SETUP } };
   let docComments = [];
 
   // ---- clean serialization (pagination spacers + UI marks stripped) ----
@@ -159,8 +179,20 @@ async function main() {
         pageEnd = top + contentH;
         forceNext = false;
       } else if (top + h > pageEnd) {
-        // oversized block straddles sheets; no gap visuals inside it
-        while (top + h > pageEnd) { pageEnd += contentH + mBottom + mTop; count++; }
+        // Oversized block (typically a tall table) straddles multiple
+        // sheets. It can't be pushed down with a single marginTop the way
+        // smaller blocks are — different parts of the SAME block belong on
+        // different pages — so instead draw page-gap dividers directly over
+        // its content at each break point. That's the same honest
+        // approximation print/PDF export already makes at a mid-block page
+        // break: the row a break lands on gets visually interrupted, same
+        // as it would in real pagination, rather than the break being
+        // invisible and the page just silently running long.
+        while (top + h > pageEnd) {
+          gaps.push(pageEnd + mBottom);
+          pageEnd += contentH + mBottom + mTop;
+          count++;
+        }
       }
       if (block.classList && block.classList.contains("page-break")) forceNext = true;
     }
@@ -296,7 +328,7 @@ async function main() {
     let cur = Math.floor(probe / unit) + 1;
     cur = Math.min(met.count, Math.max(1, cur));
     const pc = $("pagecount");
-    if (pc) pc.textContent = `Page ${cur} of ${met.count}`;
+    if (pc) pc.textContent = t("status.pageOf", { cur, total: met.count });
   }
   $("editor-wrap").addEventListener("scroll", updateCurrentPage, { passive: true });
 
@@ -318,8 +350,8 @@ async function main() {
     hbar.innerHTML =
       '<div class="ruler-track">' +
       '<div class="ruler-shade left"></div><div class="ruler-shade right"></div>' +
-      '<div class="ruler-marker left" title="Left margin — drag to adjust"></div>' +
-      '<div class="ruler-marker right" title="Right margin — drag to adjust"></div>' +
+      `<div class="ruler-marker left" title="${t("ruler.leftMargin")}"></div>` +
+      `<div class="ruler-marker right" title="${t("ruler.rightMargin")}"></div>` +
       '</div>';
     toolbar.after(hbar);
 
@@ -328,8 +360,8 @@ async function main() {
     vbar.innerHTML =
       '<div class="ruler-vtrack">' +
       '<div class="ruler-vshade top"></div><div class="ruler-vshade bottom"></div>' +
-      '<div class="ruler-vmarker top" title="Top margin — drag to adjust"></div>' +
-      '<div class="ruler-vmarker bottom" title="Bottom margin — drag to adjust"></div>' +
+      `<div class="ruler-vmarker top" title="${t("ruler.topMargin")}"></div>` +
+      `<div class="ruler-vmarker bottom" title="${t("ruler.bottomMargin")}"></div>` +
       '</div>';
     app.appendChild(vbar);
 
@@ -487,7 +519,8 @@ async function main() {
 
   function updateWordCount() {
     const { words, chars } = countWords(editor);
-    $("wc").textContent = `${words} word${words === 1 ? "" : "s"} · ${chars} chars`;
+    const wordUnit = t(words === 1 ? "status.word" : "status.words");
+    $("wc").textContent = t("status.wordCount", { words, wordUnit, chars });
   }
 
   // ---- autosave + realtime ----
@@ -550,10 +583,10 @@ async function main() {
     const banner = $("banner");
     banner.classList.remove("hidden");
     banner.innerHTML = "";
-    const who = from ? `${from.user}` : "another session";
-    banner.appendChild(document.createTextNode(`This document was changed by ${who}. `));
+    const who = from ? `${from.user}` : t("conflict.anotherSession");
+    banner.appendChild(document.createTextNode(t("conflict.changedBy", { who }) + " "));
     const loadBtn = document.createElement("button");
-    loadBtn.textContent = "Load their version";
+    loadBtn.textContent = t("conflict.loadTheirs");
     loadBtn.addEventListener("click", () => {
       autosaver.suspended = true;
       if (server.title != null) titleInput.value = server.title;
@@ -567,7 +600,7 @@ async function main() {
       setStatus("synced");
     });
     const keepBtn = document.createElement("button");
-    keepBtn.textContent = "Keep mine (overwrite)";
+    keepBtn.textContent = t("conflict.keepMine");
     keepBtn.addEventListener("click", () => {
       autosaver.setRev(server.rev || 0);
       banner.classList.add("hidden");
@@ -596,7 +629,7 @@ async function main() {
   function jumpToComment(cid) {
     const anchors = commentAnchors(cid);
     if (!anchors.length) return;
-    anchors[0].scrollIntoView({ block: "center", behavior: "smooth" });
+    scrollElementIntoEditorView(editor, anchors[0]);
     for (const a of anchors) a.classList.add("active");
     setTimeout(() => { for (const a of anchors) a.classList.remove("active"); }, 1600);
   }
@@ -605,7 +638,7 @@ async function main() {
     if (!docComments.length) {
       const li = document.createElement("li");
       li.className = "muted";
-      li.textContent = "No comments yet — select text and right-click → Add comment.";
+      li.textContent = t("comments.empty");
       commentsItems.appendChild(li);
       return;
     }
@@ -617,9 +650,9 @@ async function main() {
       head.className = "comment-head";
       const author = document.createElement("span");
       author.className = "comment-author";
-      author.textContent = c.author || "Unknown";
+      author.textContent = c.author || t("comments.unknown");
       const when = document.createElement("span");
-      when.textContent = (c.resolved ? "resolved · " : "") + fmtTime(c.createdAt);
+      when.textContent = (c.resolved ? t("comments.resolvedPrefix") : "") + fmtTime(c.createdAt);
       head.append(author, when);
       const text = document.createElement("div");
       text.className = "comment-text";
@@ -628,7 +661,7 @@ async function main() {
       if (!commentAnchors(c.id).length) {
         const orphan = document.createElement("div");
         orphan.className = "comment-orphan";
-        orphan.textContent = "(anchor text was removed)";
+        orphan.textContent = t("comments.orphan");
         card.appendChild(orphan);
       }
       for (const r of c.replies || []) {
@@ -643,12 +676,12 @@ async function main() {
       const actions = document.createElement("div");
       actions.className = "comment-actions";
       const replyBtn = document.createElement("button");
-      replyBtn.textContent = "Reply";
+      replyBtn.textContent = t("comments.reply");
       replyBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         const input = document.createElement("input");
         input.type = "text";
-        input.placeholder = "Reply…";
+        input.placeholder = t("comments.replyPlaceholder");
         input.className = "comment-reply-input";
         actions.before(input);
         input.focus();
@@ -662,7 +695,7 @@ async function main() {
         });
       });
       const resolveBtn = document.createElement("button");
-      resolveBtn.textContent = c.resolved ? "Reopen" : "Resolve";
+      resolveBtn.textContent = c.resolved ? t("comments.reopen") : t("comments.resolve");
       resolveBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         c.resolved = !c.resolved;
@@ -671,10 +704,10 @@ async function main() {
         scheduleSave();
       });
       const delBtn = document.createElement("button");
-      delBtn.textContent = "Delete";
+      delBtn.textContent = t("comments.delete");
       delBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (!confirm("Delete this comment?")) return;
+        if (!confirm(t("comments.deleteConfirm"))) return;
         for (const a of [...commentAnchors(c.id)]) {
           const p = a.parentNode;
           while (a.firstChild) p.insertBefore(a.firstChild, a);
@@ -702,17 +735,17 @@ async function main() {
     const ta = document.createElement("textarea");
     ta.rows = 3;
     ta.style.cssText = "width:100%;box-sizing:border-box;font:13px/1.4 inherit;padding:6px";
-    ta.placeholder = "Write a comment…";
-    openDialog("Add comment", ta, [
-      { label: "Cancel" },
+    ta.placeholder = t("comments.writePlaceholder");
+    openDialog(t("comments.addTitle"), ta, [
+      { label: t("dlg.cancel") },
       {
-        label: "Comment", primary: true,
+        label: t("comments.commentLabel"), primary: true,
         onClick: () => {
           const text = ta.value.trim();
           if (!text) return false;
           const cid = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
           if (!wrapSelectionComment(editor, cid)) {
-            alert("Select some text to comment on first.");
+            alert(t("comments.selectFirst"));
             return;
           }
           docComments.push({ id: cid, author: userName, text, createdAt: Date.now(), resolved: false, replies: [] });
@@ -746,9 +779,7 @@ async function main() {
     if (!changes.length) {
       const li = document.createElement("li");
       li.className = "muted";
-      li.textContent = track.isEnabled()
-        ? "No pending changes. Edits are now being recorded."
-        : "No pending changes. Turn on Track changes to record edits.";
+      li.textContent = track.isEnabled() ? t("review.emptyRecording") : t("review.emptyOff");
       reviewItems.appendChild(li);
       return;
     }
@@ -760,7 +791,7 @@ async function main() {
       head.className = "comment-head";
       const badge = document.createElement("span");
       badge.className = "badge";
-      badge.textContent = (ch.type === "insertion" ? "➕ inserted" : "➖ deleted") + " · " + ch.author;
+      badge.textContent = (ch.type === "insertion" ? t("review.inserted") : t("review.deleted")) + " · " + ch.author;
       const when = document.createElement("span");
       when.textContent = ch.ts ? fmtTime(ch.ts) : "";
       head.append(badge, when);
@@ -770,15 +801,15 @@ async function main() {
       const actions = document.createElement("div");
       actions.className = "comment-actions";
       const acc = document.createElement("button");
-      acc.textContent = "Accept";
+      acc.textContent = t("review.accept");
       acc.addEventListener("click", (e) => { e.stopPropagation(); track.accept(ch.node); renderReview(); });
       const rej = document.createElement("button");
-      rej.textContent = "Reject";
+      rej.textContent = t("review.reject");
       rej.addEventListener("click", (e) => { e.stopPropagation(); track.reject(ch.node); renderReview(); });
       actions.append(acc, rej);
       card.append(head, snippet, actions);
       card.addEventListener("click", () => {
-        ch.node.scrollIntoView({ block: "center", behavior: "smooth" });
+        scrollElementIntoEditorView(editor, ch.node);
         ch.node.classList.add("flash");
         setTimeout(() => ch.node.classList.remove("flash"), 1200);
       });
@@ -800,13 +831,13 @@ async function main() {
   });
   $("btn-accept-all").addEventListener("click", () => {
     if (!track.list().length) return;
-    if (!confirm("Accept all tracked changes?")) return;
+    if (!confirm(t("review.acceptAllConfirm"))) return;
     track.acceptAll();
     renderReview();
   });
   $("btn-reject-all").addEventListener("click", () => {
     if (!track.list().length) return;
-    if (!confirm("Reject all tracked changes?")) return;
+    if (!confirm(t("review.rejectAllConfirm"))) return;
     track.rejectAll();
     renderReview();
   });
@@ -887,7 +918,7 @@ async function main() {
     if (savedId) loaded = await loadDocument(savedId);
   }
   if (!loaded) {
-    const meta = await createDocument("Untitled");
+    const meta = await createDocument(t("doc.untitled"));
     await loadDocument(meta.id);
   }
 
@@ -907,7 +938,7 @@ async function main() {
   // ---- New ----
   $("btn-new").addEventListener("click", async () => {
     await autosaver.flush();
-    const meta = await createDocument("Untitled");
+    const meta = await createDocument(t("doc.untitled"));
     await loadDocument(meta.id);
     editor.focus();
   });
@@ -918,6 +949,18 @@ async function main() {
     const file = fileInput.files && fileInput.files[0];
     if (!file) return;
     const name = file.name.toLowerCase();
+    // Legacy binary .doc/.dot (pre-2007 OLE/CFB) can't be parsed in the
+    // browser at all — there's no client-side path for it, unlike every
+    // other branch below. It's uploaded as-is and the server converts it via
+    // LibreOffice (see server/docConvert.js) before parsing, same as a
+    // native .docx from there on. Other legacy Office formats (spreadsheets,
+    // presentations) aren't word-processor content and stay blocked.
+    const isLegacyWordDoc = /\.(doc|dot)$/.test(name);
+    if (!isLegacyWordDoc && /\.(xls|xlt|ppt|pot|rtf)$/.test(name)) {
+      alert(t("open.legacyFormatBlocked", { name: file.name }));
+      fileInput.value = "";
+      return;
+    }
     // PDF: open in read-only viewer
     if (name.endsWith(".pdf")) {
       setStatus("saving");
@@ -932,11 +975,11 @@ async function main() {
         });
         setStatus("saved");
         const info = getPdfInfo();
-        if (info) $("pagecount").textContent = `${info.numPages} page${info.numPages === 1 ? "" : "s"} (PDF)`;
+        if (info) $("pagecount").textContent = t("status.pdfPages", { n: info.numPages, unit: t(info.numPages === 1 ? "status.page" : "status.pages") });
       } catch (e) {
         console.error(e);
         setStatus("error");
-        alert("Could not open PDF: " + e.message);
+        alert(t("open.pdfFailed", { msg: e.message }));
       } finally {
         fileInput.value = "";
       }
@@ -946,21 +989,38 @@ async function main() {
     if (isPdfMode()) closePdf();
     setStatus("saving");
     try {
-      let html, pageSetup = { ...DEFAULT_PAGE_SETUP }, comments = [];
-      if (name.endsWith(".txt")) {
-        html = plainTextToHtml(await file.text());
-      } else if (name.endsWith(".html") || name.endsWith(".htm")) {
-        html = sanitizeHtml(await file.text());
+      let html, pageSetup = { ...DEFAULT_PAGE_SETUP }, comments = [], title, seeded, skipClientSave = false;
+      if (isLegacyWordDoc) {
+        // No client-side parser exists for this format — upload the raw
+        // bytes and let the server convert (LibreOffice) + parse it, then
+        // pull the result back. Unlike every other branch here, the
+        // server's parse is the ONLY copy that exists, so it's fetched
+        // rather than recomputed, and there's nothing to push back on top
+        // of it afterward.
+        seeded = await importDocxFile(file);
+        const full = await getDocument(seeded.id);
+        if (!full) throw new Error(t("open.noConvertedDoc"));
+        html = full.state || "<p><br></p>";
+        pageSetup = full.pageSetup || pageSetup;
+        comments = full.comments || [];
+        title = full.title || file.name.replace(/\.(doc|dot)$/i, "");
+        skipClientSave = true;
       } else {
-        const res = await importDocx(file);
-        html = res.html;
-        pageSetup = res.pageSetup;
-        comments = res.comments || [];
+        if (name.endsWith(".txt")) {
+          html = plainTextToHtml(await file.text());
+        } else if (name.endsWith(".html") || name.endsWith(".htm")) {
+          html = sanitizeHtml(await file.text());
+        } else {
+          const res = await importDocx(file);
+          html = res.html;
+          pageSetup = res.pageSetup;
+          comments = res.comments || [];
+        }
+        title = file.name.replace(/\.(docx|txt|html?|pdf)$/i, "");
+        seeded = name.endsWith(".docx")
+          ? await importDocxFile(file)
+          : await createDocument(title);
       }
-      const title = file.name.replace(/\.(docx|txt|html?|pdf)$/i, "");
-      const seeded = name.endsWith(".docx")
-        ? await importDocxFile(file)
-        : await createDocument(title);
       autosaver.setId(seeded.id, seeded.rev || 0);
       current = { id: seeded.id, title, pageSetup };
       docComments = comments;
@@ -968,15 +1028,19 @@ async function main() {
       applyPageSetup(pageSetup);
       setEditorContent(html);
       renderComments();
-      const doc = await saveDocument(seeded.id, { title, state: getCleanHtml(), pageSetup, comments });
-      autosaver.setRev(doc.rev);
+      if (skipClientSave) {
+        autosaver.setRev(seeded.rev || 0);
+      } else {
+        const doc = await saveDocument(seeded.id, { title, state: getCleanHtml(), pageSetup, comments });
+        autosaver.setRev(doc.rev);
+      }
       if (!embedded) localStorage.setItem(LS_KEY, seeded.id);
       sync.join(seeded.id);
       setStatus("saved");
     } catch (e) {
       console.error(e);
       setStatus("error");
-      alert("Could not open file: " + e.message);
+      alert(t("open.fileFailed", { msg: e.message }));
     } finally {
       fileInput.value = "";
     }
@@ -1007,11 +1071,21 @@ async function main() {
     // Document: flush, clear editor, create a fresh blank doc
     await autosaver.flush();
     if (current && current.id) sync.leave(current.id);
-    const meta = await createDocument("Untitled");
+    const meta = await createDocument(t("doc.untitled"));
     await loadDocument(meta.id);
     localStorage.removeItem(LS_KEY);
     editor.focus();
   });
+  // Non-reactive app (DOM built once at startup) — switching language
+  // persists the choice and reloads, same as any other locale-affecting
+  // change here. The button's own label is always the OTHER language's
+  // name, since it's phrased as "switch to X".
+  if ($("btn-lang")) {
+    $("btn-lang").textContent = t("lang.switchTo");
+    $("btn-lang").addEventListener("click", () => {
+      setLocale(getLocale() === "zh" ? "en" : "zh");
+    });
+  }
   fileMenu.addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b || b.id === "btn-export") return; // keep menu open to show the Export flyout
@@ -1043,7 +1117,7 @@ async function main() {
     } catch (e) {
       console.error(e);
       setStatus("error");
-      alert("Export failed: " + e.message);
+      alert(t("export.failed", { msg: e.message }));
     }
   }
   exportMenu.addEventListener("click", (e) => {
@@ -1106,18 +1180,18 @@ async function main() {
     const cur = ch[which] || { text: "", align: "center" };
     const textIn = document.createElement("input");
     textIn.type = "text"; textIn.value = cur.text || "";
-    textIn.placeholder = "Header/footer text";
-    const alignSel = makeSelect([["left", "Left"], ["center", "Center"], ["right", "Right"]], cur.align || "center");
+    textIn.placeholder = t("chrome.textPlaceholder");
+    const alignSel = makeSelect([["left", t("chrome.left")], ["center", t("chrome.center")], ["right", t("chrome.right")]], cur.align || "center");
     const body = document.createElement("div");
-    body.append(dlgField("Text", textIn), dlgField("Alignment", alignSel));
+    body.append(dlgField(t("dlg.text"), textIn), dlgField(t("chrome.alignment"), alignSel));
     const hint = document.createElement("div");
     hint.className = "dlg-hint";
-    hint.textContent = `Shown in the ${which} of every page. Clear the text and Apply to remove it.`;
+    hint.textContent = t(which === "header" ? "chrome.hintHeader" : "chrome.hintFooter");
     body.appendChild(hint);
-    openDialog(which === "header" ? "Edit header" : "Edit footer", body, [
-      { label: "Cancel" },
+    openDialog(t(which === "header" ? "chrome.editHeader" : "chrome.editFooter"), body, [
+      { label: t("dlg.cancel") },
       {
-        label: "Apply", primary: true,
+        label: t("dlg.apply"), primary: true,
         onClick: () => {
           const text = textIn.value.trim();
           if (text) ch[which] = { text, align: alignSel.value };
@@ -1136,22 +1210,22 @@ async function main() {
     const enWrap = document.createElement("label");
     enWrap.className = "dlg-field dlg-check";
     const enSpan = document.createElement("span");
-    enSpan.textContent = "Show page numbers";
+    enSpan.textContent = t("chrome.showPageNumbers");
     enWrap.append(enCk, enSpan);
     const fmtSel = makeSelect([
       ["arabic", "1, 2, 3"], ["roman", "i, ii, iii"], ["alpha", "a, b, c"],
-      ["page", "Page 1"], ["pageOfN", "Page 1 of N"],
+      ["page", t("chrome.fmtPage")], ["pageOfN", t("chrome.fmtPageOfN")],
     ], cur.format || "arabic");
     const placeSel = makeSelect([
-      ["header-left", "Top left"], ["header-center", "Top center"], ["header-right", "Top right"],
-      ["footer-left", "Bottom left"], ["footer-center", "Bottom center"], ["footer-right", "Bottom right"],
+      ["header-left", t("chrome.topLeft")], ["header-center", t("chrome.topCenter")], ["header-right", t("chrome.topRight")],
+      ["footer-left", t("chrome.bottomLeft")], ["footer-center", t("chrome.bottomCenter")], ["footer-right", t("chrome.bottomRight")],
     ], cur.place || "footer-center");
     const body = document.createElement("div");
-    body.append(enWrap, dlgField("Format", fmtSel), dlgField("Position", placeSel));
-    openDialog("Page numbers", body, [
-      { label: "Cancel" },
+    body.append(enWrap, dlgField(t("chrome.format"), fmtSel), dlgField(t("chrome.position"), placeSel));
+    openDialog(t("chrome.pageNumbersTitle"), body, [
+      { label: t("dlg.cancel") },
       {
-        label: "Apply", primary: true,
+        label: t("dlg.apply"), primary: true,
         onClick: () => {
           ch.pageNumber = { enabled: enCk.checked, format: fmtSel.value, place: placeSel.value };
           schedulePaginate();
@@ -1175,7 +1249,7 @@ async function main() {
     const docs = await listDocuments();
     if (!docs.length) {
       const li = document.createElement("li");
-      li.textContent = "No saved documents yet.";
+      li.textContent = t("library.empty");
       li.className = "muted";
       libraryItems.appendChild(li);
       return;
@@ -1186,7 +1260,7 @@ async function main() {
       const open = document.createElement("button");
       open.className = "lib-open";
       open.innerHTML = `<span class="lib-title"></span><span class="lib-date"></span>`;
-      open.querySelector(".lib-title").textContent = d.title || "Untitled";
+      open.querySelector(".lib-title").textContent = d.title || t("doc.untitled");
       open.querySelector(".lib-date").textContent = fmtTime(d.updatedAt);
       open.addEventListener("click", async () => {
         await autosaver.flush();
@@ -1195,14 +1269,14 @@ async function main() {
       });
       const del = document.createElement("button");
       del.className = "lib-del";
-      del.title = "Delete document";
+      del.title = t("library.deleteDoc");
       del.textContent = "🗑";
       del.addEventListener("click", async (e) => {
         e.stopPropagation();
-        if (!confirm(`Delete "${d.title}"? This cannot be undone.`)) return;
+        if (!confirm(t("library.deleteConfirm", { title: d.title }))) return;
         await deleteDocument(d.id);
         if (d.id === current.id) {
-          const meta = await createDocument("Untitled");
+          const meta = await createDocument(t("doc.untitled"));
           await loadDocument(meta.id);
         }
         await renderLibrary();
@@ -1226,7 +1300,7 @@ async function main() {
     const versions = await listVersions(current.id);
     if (!versions.length) {
       const li = document.createElement("li");
-      li.textContent = "No versions yet — versions are snapshotted as you edit.";
+      li.textContent = t("history.empty");
       li.className = "muted";
       historyItems.appendChild(li);
       return;
@@ -1237,10 +1311,10 @@ async function main() {
       const info = document.createElement("button");
       info.className = "lib-open";
       info.innerHTML = `<span class="lib-title"></span><span class="lib-date"></span>`;
-      info.querySelector(".lib-title").textContent = `rev ${v.rev} — ${v.title}`;
+      info.querySelector(".lib-title").textContent = t("history.revLabel", { rev: v.rev, title: v.title });
       info.querySelector(".lib-date").textContent = fmtTime(v.t);
       info.addEventListener("click", async () => {
-        if (!confirm(`Restore version from ${fmtTime(v.t)}? Current content is snapshotted first.`)) return;
+        if (!confirm(t("history.restoreConfirm", { when: fmtTime(v.t) }))) return;
         const doc = await restoreVersion(current.id, v.index);
         autosaver.setRev(doc.rev);
         titleInput.value = doc.title;
@@ -1320,8 +1394,22 @@ async function main() {
         case "getContent": reply({ html: getCleanHtml() }); break;
         case "getText": reply({ text: htmlToPlainText(getCleanHtml()) }); break;
         case "setContent": setEditorContent(m.args && m.args.html || ""); scheduleSave(); reply({ ok: true }); break;
-        case "insertText": insertTextAtCaret(editor, (m.args && m.args.text) || ""); scheduleSave(); reply({ ok: true }); break;
-        case "insertHtml": insertHtmlAtCaret(editor, sanitizeHtml((m.args && m.args.html) || "")); scheduleSave(); reply({ ok: true }); break;
+        // When track changes is on, these must go through track.insertText/
+        // insertHtml (real <ins class="tc-ins"> revisions, visible in the
+        // Review panel, undo/redo- and accept/reject-able) instead of a
+        // plain execCommand edit — otherwise "apply this as a tracked
+        // revision" silently produces an untracked edit with no way to
+        // review, accept, reject, or reliably undo it as one step.
+        case "insertText":
+          editor.focus(); restoreSelection(editor);
+          if (track.isEnabled()) track.insertText((m.args && m.args.text) || "");
+          else insertTextAtCaret(editor, (m.args && m.args.text) || "");
+          scheduleSave(); reply({ ok: true }); break;
+        case "insertHtml":
+          editor.focus(); restoreSelection(editor);
+          if (track.isEnabled()) track.insertHtml(sanitizeHtml((m.args && m.args.html) || ""));
+          else insertHtmlAtCaret(editor, sanitizeHtml((m.args && m.args.html) || ""));
+          scheduleSave(); reply({ ok: true }); break;
         case "getMeta": reply({ id: current.id, title: titleInput.value, rev: autosaver.rev, pageSetup: current.pageSetup, trackChanges: track.isEnabled(), commentCount: docComments.length, ...countWords(editor) }); break;
         case "setTitle": titleInput.value = String((m.args && m.args.title) || ""); scheduleSave(); reply({ ok: true }); break;
         case "save": { scheduleSave(); await autosaver.flush(); reply({ ok: true, rev: autosaver.rev }); break; }
@@ -1336,6 +1424,7 @@ async function main() {
         case "find": reply({ matches: findPanel.find((m.args && m.args.query) || "", m.args || {}) }); break;
         case "replaceAll": reply({ replaced: findPanel.replaceAll((m.args && m.args.query) || "", (m.args && m.args.replacement) || "", m.args || {}) }); break;
         case "focus": editor.focus(); reply({ ok: true }); break;
+        case "setAuthToken": setAuthToken((m.args && m.args.token) || null); reply({ ok: true }); break;
         case "addComment": {
           const text = ((m.args && m.args.text) || "").trim();
           if (!text) { reply(null, "text required"); break; }
@@ -1469,7 +1558,7 @@ async function main() {
         case "listDocuments": reply({ documents: await listDocuments() }); break;
         case "newDocument": {
           await autosaver.flush();
-          const meta = await createDocument(String((m.args && m.args.title) || "Untitled"));
+          const meta = await createDocument(String((m.args && m.args.title) || t("doc.untitled")));
           await loadDocument(meta.id);
           reply({ ok: true, id: meta.id });
           break;

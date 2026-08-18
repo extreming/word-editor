@@ -50,44 +50,44 @@
     <!-- Left: the host application's controls (OUTSIDE the iframe) -->
     <aside class="host-side">
       <header>
-        <h1>Host app — controls</h1>
-        <p>Drives the embedded DocEditor via the JS SDK and postMessage API.</p>
+        <h1 data-i18n="embedDemo.hostTitle">Host app — controls</h1>
+        <p data-i18n="embedDemo.hostDesc">Drives the embedded DocEditor via the JS SDK and postMessage API.</p>
       </header>
       <div class="host-scroll">
 
         <section class="group">
-          <h2>Document</h2>
+          <h2 data-i18n="embedDemo.group.document">Document</h2>
           <div>
-            <button class="primary" onclick="act('getContent')">↩ Get content</button>
-            <button onclick="act('getText')">↩ Plain text</button>
-            <button onclick="act('getMeta')">↩ Meta</button>
-            <button onclick="act('save')">💾 Save</button>
-            <button onclick="act('newDocument')">＋ New</button>
-            <button onclick="act('listDocuments')">↩ List docs</button>
+            <button class="primary" onclick="act('getContent')" data-i18n="embedDemo.getContent">↩ Get content</button>
+            <button onclick="act('getText')" data-i18n="embedDemo.getText">↩ Plain text</button>
+            <button onclick="act('getMeta')" data-i18n="embedDemo.getMeta">↩ Meta</button>
+            <button onclick="act('save')" data-i18n="embedDemo.save">💾 Save</button>
+            <button onclick="act('newDocument')" data-i18n="embedDemo.new">＋ New</button>
+            <button onclick="act('listDocuments')" data-i18n="embedDemo.listDocs">↩ List docs</button>
           </div>
         </section>
 
         <section class="group">
-          <h2>Insert</h2>
+          <h2 data-i18n="embedDemo.group.insert">Insert</h2>
           <div>
-            <button onclick="demo.insertText()">Insert text</button>
-            <button onclick="demo.insertHtml()">Insert paragraph</button>
-            <button onclick="demo.insertLink()">Insert link</button>
-            <button onclick="demo.insertImage()">Insert image</button>
-            <button onclick="demo.insertTable()">Insert table</button>
-            <button onclick="act('insertPageBreak')">Page break</button>
-            <button onclick="act('insertBlankPage')">Blank page</button>
-            <button onclick="act('insertHr')">Horizontal line</button>
+            <button onclick="demo.insertText()" data-i18n="home.demo.insertText">Insert text</button>
+            <button onclick="demo.insertHtml()" data-i18n="home.demo.insertParagraph">Insert paragraph</button>
+            <button onclick="demo.insertLink()" data-i18n="home.demo.insertLink">Insert link</button>
+            <button onclick="demo.insertImage()" data-i18n="embedDemo.insertImage">Insert image</button>
+            <button onclick="demo.insertTable()" data-i18n="embedDemo.insertTable">Insert table</button>
+            <button onclick="act('insertPageBreak')" data-i18n="menu.pageBreak">Page break</button>
+            <button onclick="act('insertBlankPage')" data-i18n="menu.blankPage">Blank page</button>
+            <button onclick="act('insertHr')" data-i18n="menu.hr">Horizontal line</button>
             <div class="field" style="width:100%">
-              <span>Symbol</span>
+              <span data-i18n="menu.symbol">Symbol</span>
               <input type="text" id="sym" width="3" size="3" maxlength="2" value="§">
-              <button onclick="demo.insertSymbol()">Insert</button>
+              <button onclick="demo.insertSymbol()" data-i18n="dlg.insert">Insert</button>
             </div>
           </div>
         </section>
 
         <section class="group">
-          <h2>Formatting</h2>
+          <h2 data-i18n="embedDemo.group.formatting">Formatting</h2>
           <div>
             <button onclick="act('bold')"><b>B</b></button>
             <button onclick="act('italic')"><i>I</i></button>
@@ -96,28 +96,28 @@
             <button onclick="act('formatBlock','H1')">H1</button>
             <button onclick="act('formatBlock','H2')">H2</button>
             <button onclick="act('formatBlock','P')">P</button>
-            <button onclick="act('insertUnorderedList')">• List</button>
-            <button onclick="act('insertOrderedList')">1. List</button>
+            <button onclick="act('insertUnorderedList')" data-i18n="embedDemo.listBullet">• List</button>
+            <button onclick="act('insertOrderedList')" data-i18n="embedDemo.listNumbered">1. List</button>
             <button onclick="act('justifyLeft')">⬅</button>
             <button onclick="act('justifyCenter')">⬌</button>
             <button onclick="act('justifyRight')">➡</button>
-            <button onclick="act('indent')">Indent</button>
-            <button onclick="act('outdent')">Outdent</button>
+            <button onclick="act('indent')" data-i18n="embedDemo.indent">Indent</button>
+            <button onclick="act('outdent')" data-i18n="embedDemo.outdent">Outdent</button>
             <div class="field" style="width:100%">
-              <span>Color</span>
+              <span data-i18n="tb.textColor">Color</span>
               <input type="color" id="fg" value="#c0392b" style="width:24px;height:24px;padding:0;border:none">
-              <button onclick="demo.foreColor()">Apply</button>
+              <button onclick="demo.foreColor()" data-i18n="dlg.apply">Apply</button>
               <input type="color" id="bg" value="#fff2a8" style="width:24px;height:24px;padding:0;border:none">
-              <button onclick="demo.hiliteColor()">Highlight</button>
+              <button onclick="demo.hiliteColor()" data-i18n="tb.highlight">Highlight</button>
             </div>
           </div>
         </section>
 
         <section class="group">
-          <h2>Page setup</h2>
+          <h2 data-i18n="tb.pageSetup">Page setup</h2>
           <div>
             <div class="field">
-              <span>Size</span>
+              <span data-i18n="embedDemo.size">Size</span>
               <select id="ps-size">
                 <option value="Letter">Letter</option>
                 <option value="A4">A4</option>
@@ -126,51 +126,51 @@
               </select>
             </div>
             <div class="field">
-              <span>Orient.</span>
+              <span data-i18n="embedDemo.orient">Orient.</span>
               <select id="ps-orient">
-                <option value="portrait">portrait</option>
-                <option value="landscape">landscape</option>
+                <option value="portrait" data-i18n="pageSetup.portrait">portrait</option>
+                <option value="landscape" data-i18n="pageSetup.landscape">landscape</option>
               </select>
             </div>
             <div class="field">
-              <span>Top</span>
+              <span data-i18n="embedDemo.top">Top</span>
               <input type="number" id="ps-mt" min="0.2" max="5" step="0.1" value="1">
-              <span>in</span>
+              <span data-i18n="embedDemo.in">in</span>
             </div>
             <div class="field">
-              <span>Left</span>
+              <span data-i18n="embedDemo.left">Left</span>
               <input type="number" id="ps-ml" min="0.2" max="5" step="0.1" value="1">
-              <span>in</span>
+              <span data-i18n="embedDemo.in">in</span>
             </div>
-            <button class="primary" onclick="demo.applyPageSetup()">Apply</button>
+            <button class="primary" onclick="demo.applyPageSetup()" data-i18n="dlg.apply">Apply</button>
           </div>
         </section>
 
         <section class="group">
-          <h2>Headers / footers / page numbers</h2>
+          <h2 data-i18n="embedDemo.group.headerFooterPageNum">Headers / footers / page numbers</h2>
           <div>
             <div class="field" style="width:100%">
-              <span>Header</span>
-              <input type="text" id="hdr-text" placeholder="(blank = clear)" size="14">
+              <span data-i18n="menu.header">Header</span>
+              <input type="text" id="hdr-text" placeholder="(blank = clear)" data-i18n-placeholder="embedDemo.blankToClear" size="14">
               <select id="hdr-align">
                 <option value="left">L</option>
                 <option value="center" selected>C</option>
                 <option value="right">R</option>
               </select>
-              <button onclick="demo.setHeader()">Set</button>
+              <button onclick="demo.setHeader()" data-i18n="embedDemo.set">Set</button>
             </div>
             <div class="field" style="width:100%">
-              <span>Footer</span>
-              <input type="text" id="ftr-text" placeholder="(blank = clear)" size="14">
+              <span data-i18n="menu.footer">Footer</span>
+              <input type="text" id="ftr-text" placeholder="(blank = clear)" data-i18n-placeholder="embedDemo.blankToClear" size="14">
               <select id="ftr-align">
                 <option value="left">L</option>
                 <option value="center" selected>C</option>
                 <option value="right">R</option>
               </select>
-              <button onclick="demo.setFooter()">Set</button>
+              <button onclick="demo.setFooter()" data-i18n="embedDemo.set">Set</button>
             </div>
             <div class="field" style="width:100%">
-              <span>Page #</span>
+              <span data-i18n="embedDemo.pageNum">Page #</span>
               <select id="pn-fmt">
                 <option value="arabic">1, 2, 3</option>
                 <option value="roman">i, ii, iii</option>
@@ -184,76 +184,76 @@
                 <option value="footer-right">bottom R</option>
                 <option value="header-right">top R</option>
               </select>
-              <button onclick="demo.setPageNumbers()">On</button>
-              <button onclick="editor.setPageNumbers({enabled:false}); log('pageNumbers off')">Off</button>
+              <button onclick="demo.setPageNumbers()" data-i18n="embedDemo.on">On</button>
+              <button onclick="editor.setPageNumbers({enabled:false}); log('pageNumbers off')" data-i18n="embedDemo.off">Off</button>
             </div>
           </div>
         </section>
 
         <section class="group">
-          <h2>Zoom</h2>
+          <h2 data-i18n="toolbar.zoom">Zoom</h2>
           <div>
             <button onclick="editor.setZoom(0.75);log('setZoom 0.75')">75%</button>
             <button onclick="editor.setZoom(1);log('setZoom 1')">100%</button>
             <button onclick="editor.setZoom(1.25);log('setZoom 1.25')">125%</button>
             <button onclick="editor.setZoom(1.5);log('setZoom 1.5')">150%</button>
-            <button onclick="act('getZoom')">↩ read</button>
+            <button onclick="act('getZoom')" data-i18n="embedDemo.read">↩ read</button>
           </div>
         </section>
 
         <section class="group">
-          <h2>Comments &amp; review</h2>
+          <h2 data-i18n="embedDemo.group.commentsReview">Comments &amp; review</h2>
           <div>
             <div class="field" style="width:100%">
-              <input type="text" id="cmt-text" placeholder="Comment…" size="18">
-              <button onclick="demo.addComment()">Add on selection</button>
+              <input type="text" id="cmt-text" placeholder="Comment…" data-i18n-placeholder="embedDemo.commentPlaceholder" size="18">
+              <button onclick="demo.addComment()" data-i18n="embedDemo.addOnSelection">Add on selection</button>
             </div>
-            <button onclick="act('getComments')">↩ List comments</button>
-            <label class="field"><input type="checkbox" id="tc-toggle"> Track changes</label>
-            <button onclick="demo.toggleTrack()">Apply</button>
-            <button onclick="act('getChanges')">↩ List changes</button>
-            <button onclick="act('acceptAllChanges')">Accept all</button>
-            <button onclick="act('rejectAllChanges')">Reject all</button>
+            <button onclick="act('getComments')" data-i18n="embedDemo.listComments">↩ List comments</button>
+            <label class="field"><input type="checkbox" id="tc-toggle"> <span data-i18n="embedDemo.trackChanges">Track changes</span></label>
+            <button onclick="demo.toggleTrack()" data-i18n="dlg.apply">Apply</button>
+            <button onclick="act('getChanges')" data-i18n="embedDemo.listChanges">↩ List changes</button>
+            <button onclick="act('acceptAllChanges')" data-i18n="review.acceptAll">Accept all</button>
+            <button onclick="act('rejectAllChanges')" data-i18n="review.rejectAll">Reject all</button>
           </div>
         </section>
 
         <section class="group">
-          <h2>Find / replace</h2>
+          <h2 data-i18n="embedDemo.group.findReplace">Find / replace</h2>
           <div>
             <div class="field" style="width:100%">
-              <input type="text" id="find-q" placeholder="Query" size="12">
-              <button onclick="demo.find()">Find</button>
+              <input type="text" id="find-q" placeholder="Query" data-i18n-placeholder="embedDemo.query" size="12">
+              <button onclick="demo.find()" data-i18n="embedDemo.find">Find</button>
             </div>
             <div class="field" style="width:100%">
-              <input type="text" id="find-repl" placeholder="Replacement" size="12">
-              <button onclick="demo.replaceAll()">Replace all</button>
+              <input type="text" id="find-repl" placeholder="Replacement" data-i18n-placeholder="embedDemo.replacement" size="12">
+              <button onclick="demo.replaceAll()" data-i18n="find.replaceAllTitle">Replace all</button>
             </div>
           </div>
         </section>
 
         <section class="group">
-          <h2>Versions</h2>
+          <h2 data-i18n="embedDemo.group.versions">Versions</h2>
           <div>
-            <button onclick="act('listVersions')">↩ List versions</button>
+            <button onclick="act('listVersions')" data-i18n="embedDemo.listVersions">↩ List versions</button>
             <div class="field">
-              <span>Index</span>
+              <span data-i18n="embedDemo.index">Index</span>
               <input type="number" id="v-idx" min="0" value="0" style="width:48px">
-              <button onclick="demo.restoreVersion()">Restore</button>
+              <button onclick="demo.restoreVersion()" data-i18n="embedDemo.restore">Restore</button>
             </div>
           </div>
         </section>
 
         <section class="group">
-          <h2>Mode &amp; export</h2>
+          <h2 data-i18n="embedDemo.group.modeExport">Mode &amp; export</h2>
           <div>
-            <button onclick="act('setMode','edit')">Edit</button>
-            <button onclick="act('setMode','view')">View</button>
-            <button onclick="act('undo')">↩ Undo</button>
-            <button onclick="act('redo')">↩ Redo</button>
+            <button onclick="act('setMode','edit')" data-i18n="embedDemo.edit">Edit</button>
+            <button onclick="act('setMode','view')" data-i18n="embedDemo.view">View</button>
+            <button onclick="act('undo')" data-i18n="embedDemo.undo">↩ Undo</button>
+            <button onclick="act('redo')" data-i18n="embedDemo.redo">↩ Redo</button>
             <button onclick="demo.exportDoc('html')">.html</button>
             <button onclick="demo.exportDoc('txt')">.txt</button>
             <button onclick="demo.exportDoc('docx')">.docx</button>
-            <button onclick="demo.exportDoc('pdf')">PDF (print)</button>
+            <button onclick="demo.exportDoc('pdf')" data-i18n="menu.exportPdf">PDF (print)</button>
           </div>
         </section>
 
@@ -263,8 +263,8 @@
     <!-- Right: the embed is constrained to a small framed area inside the host page -->
     <main class="host-frame">
       <div class="bar">
-        <span class="title">Embedded DocEditor</span>
-        <span class="status-pill" id="ready-state">not ready</span>
+        <span class="title" data-i18n="embedDemo.embeddedTitle">Embedded DocEditor</span>
+        <span class="status-pill" id="ready-state" data-i18n="embedDemo.notReady">not ready</span>
         <span class="meta" id="doc-state">—</span>
         <span style="flex:1"></span>
         <span class="meta">iframe → /?embed=1&amp;toolbar=1&amp;statusbar=1&amp;user=Host-Demo</span>
@@ -275,6 +275,10 @@
     </main>
   </div>
 
+  <script type="module">
+    import { applyI18n } from "/js/i18n.js";
+    applyI18n();
+  </script>
   <script src="/js/sdk.js"></script>
   <script>
     const log = (...a) => console.log(...a);

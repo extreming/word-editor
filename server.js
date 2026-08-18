@@ -1,32 +1,86 @@
 "use strict";
-// Zero-dependency Node HTTP + WebSocket server for the Word-Compatible Editor.
+// Node HTTP + WebSocket server for the Word-Compatible Editor.
 // - Serves public/ and /api/*
-// - Documents stored as JSON (data/<id>.json) + .docx binaries (data/<id>.docx)
-// - Version history (data/<id>.versions.json, capped)
+// - Documents stored via server/storage.js: local disk (default) or an
+//   S3-compatible object store (STORAGE_DRIVER=s3) — see that file
+// - Server-side DOCX<->HTML conversion reuses the client's own docx.js
+//   unmodified via a jsdom shim (server/docxNode.mjs); .docx is regenerated
+//   from the HTML state on every save that changes it
+// - Version history (<id>.versions.json, capped)
 // - Revision-based conflict detection (baseRev -> 409)
-// - Hand-rolled WebSocket (/ws) for presence + live document sync
-// - Optional bearer-token auth (AUTH_TOKEN env), optional save webhook (SAVE_WEBHOOK_URL env)
+// - Hand-rolled WebSocket (/ws) for presence + live document sync, relayed
+//   across replicas via Redis when REDIS_URL is set
+// - Auth: global bearer token (AUTH_TOKEN) and/or short-lived, per-document
+//   scoped tokens minted via POST /api/auth/token — see server/scopedAuth.js
+// - Optional save webhook (SAVE_WEBHOOK_URL env) carrying the fresh .docx
 
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { mintToken, verifyToken } = require("./server/scopedAuth");
+const { createStorage } = require("./server/storage");
+const { convertToDocx: convertDocToDocx } = require("./server/docConvert");
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "127.0.0.1";
 const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
+// Secret used to sign/verify short-lived scoped tokens (see server/scopedAuth.js).
+// Defaults to AUTH_TOKEN so a single env var is enough to get started; set it
+// separately to avoid reusing the server-to-server secret as a signing key.
+const TOKEN_SECRET = process.env.TOKEN_SECRET || AUTH_TOKEN;
 const WEBHOOK = process.env.SAVE_WEBHOOK_URL || "";
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+const WEBHOOK_INLINE_MAX = 4 * 1024 * 1024; // inline docx bytes in the webhook up to this size; larger docs are sent as a download URL only
 const MAX_BODY = 64 * 1024 * 1024; // 64 MB
 const MAX_VERSIONS = 30;
 const VERSION_MIN_INTERVAL = 90 * 1000; // min ms between auto snapshots
+
+// Server-side reuse of the client's zero-dependency OOXML parser/exporter
+// (public/js/docx.js) via a jsdom DOM shim — see server/docxNode.mjs.
+let _docxNodePromise = null;
+function docxNode() {
+  if (!_docxNodePromise) _docxNodePromise = import("./server/docxNode.mjs");
+  return _docxNodePromise;
+}
+function toArrayBuffer(buf) {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+// Regenerate the canonical .docx for a document from its current HTML state.
+// Best-effort: a failure here must never block saving the HTML state itself,
+// since that remains the editor's source of truth — but it does mean the
+// .docx on disk (and anything written back to LegalAI) can go briefly stale
+// until the next successful save. Log loudly so that's visible operationally.
+async function regenerateDocx(meta) {
+  if (meta.state == null) return false;
+  try {
+    const docx = await docxNode();
+    const blob = await docx.buildDocxFromHtml(meta.state, {
+      title: meta.title, pageSetup: meta.pageSetup, comments: meta.comments,
+    });
+    const bytes = Buffer.from(await blob.arrayBuffer());
+    await storage.writeFile(docxKey(meta.id), bytes);
+    return true;
+  } catch (e) {
+    console.error(`docx regeneration failed for ${meta.id}:`, e.message);
+    return false;
+  }
+}
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, "public");
 const DATA = process.env.DATA_DIR
   ? (path.isAbsolute(process.env.DATA_DIR) ? process.env.DATA_DIR : path.join(ROOT, process.env.DATA_DIR))
   : path.join(ROOT, "data");
-fs.mkdirSync(DATA, { recursive: true });
+// Document storage: local disk (default — DATA above) or an S3-compatible
+// object store (STORAGE_DRIVER=s3), so word-editor can run as multiple
+// replicas behind a load balancer without each instance owning a private
+// disk. See server/storage.js.
+const storage = createStorage(DATA);
+if (storage.kind === "s3" && storage.ensureBucket) {
+  storage.ensureBucket().catch((e) => console.error("s3 ensureBucket failed:", e.message));
+}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -77,19 +131,23 @@ async function readJSON(req) {
 const ID_RE = /^[0-9a-fA-F-]{8,64}$/;
 function validId(id) { return ID_RE.test(id); }
 
-function docPath(id) { return path.join(DATA, `${id}.json`); }
-function docxPath(id) { return path.join(DATA, `${id}.docx`); }
-function versionsPath(id) { return path.join(DATA, `${id}.versions.json`); }
+function docKey(id) { return `${id}.json`; }
+function docxKey(id) { return `${id}.docx`; }
+function versionsKey(id) { return `${id}.versions.json`; }
 
-function readMeta(id) {
-  try { return JSON.parse(fs.readFileSync(docPath(id), "utf8")); } catch { return null; }
+async function readMeta(id) {
+  const buf = await storage.readFile(docKey(id));
+  if (!buf) return null;
+  try { return JSON.parse(buf.toString("utf8")); } catch { return null; }
 }
-function readVersions(id) {
-  try { return JSON.parse(fs.readFileSync(versionsPath(id), "utf8")); } catch { return []; }
+async function readVersions(id) {
+  const buf = await storage.readFile(versionsKey(id));
+  if (!buf) return [];
+  try { return JSON.parse(buf.toString("utf8")); } catch { return []; }
 }
-function snapshotVersion(id, meta, force = false) {
+async function snapshotVersion(id, meta, force = false) {
   if (meta.state == null) return;
-  const versions = readVersions(id);
+  const versions = await readVersions(id);
   const last = versions[versions.length - 1];
   if (!force && last && Date.now() - last.t < VERSION_MIN_INTERVAL) return;
   if (last && last.state === meta.state && last.title === meta.title) return;
@@ -98,10 +156,10 @@ function snapshotVersion(id, meta, force = false) {
     pageSetup: meta.pageSetup || null, comments: meta.comments || [],
   });
   while (versions.length > MAX_VERSIONS) versions.shift();
-  fs.writeFileSync(versionsPath(id), JSON.stringify(versions));
+  await storage.writeFile(versionsKey(id), Buffer.from(JSON.stringify(versions)));
 }
-function writeMeta(id, body, opts = {}) {
-  const existing = readMeta(id) || { id, title: "Untitled", createdAt: Date.now(), rev: 0 };
+async function writeMeta(id, body, opts = {}) {
+  const existing = (await readMeta(id)) || { id, title: "Untitled", createdAt: Date.now(), rev: 0 };
   const next = {
     id,
     title: body.title != null ? String(body.title).slice(0, 300) : existing.title,
@@ -109,41 +167,109 @@ function writeMeta(id, body, opts = {}) {
     pageSetup: body.pageSetup !== undefined ? body.pageSetup : (existing.pageSetup || null),
     comments: body.comments !== undefined ? body.comments : (existing.comments || []),
     trackChanges: body.trackChanges !== undefined ? !!body.trackChanges : !!existing.trackChanges,
+    // The tenantId/contractId mapping (see server/scopedAuth.js and
+    // POST /api/auth/token) — set at import time or on first token mint,
+    // and preserved for the document's lifetime after that.
+    tenantId: body.tenantId !== undefined ? (body.tenantId ? String(body.tenantId).slice(0, 200) : null) : (existing.tenantId || null),
+    contractId: body.contractId !== undefined ? (body.contractId ? String(body.contractId).slice(0, 200) : null) : (existing.contractId || null),
     createdAt: existing.createdAt,
     updatedAt: Date.now(),
     rev: (existing.rev || 0) + 1,
   };
-  fs.writeFileSync(docPath(id), JSON.stringify(next));
-  if (body.state !== undefined) snapshotVersion(id, next, opts.forceVersion);
-  fireWebhook(next);
+  await storage.writeFile(docKey(id), Buffer.from(JSON.stringify(next)));
+  if (body.state !== undefined) await snapshotVersion(id, next, opts.forceVersion);
+  // The .docx on disk is the write-back artifact for LegalAI; keep it in lock
+  // step with whatever HTML state we just persisted so it never goes stale.
+  // Exception: right after import, the uploaded bytes ARE the freshest,
+  // highest-fidelity .docx we'll ever have for this content — regenerating
+  // from our HTML approximation immediately would throw fidelity away before
+  // the user has changed anything, so that one call opts out via skipDocxRegen.
+  const docxFresh = opts.skipDocxRegen
+    ? await storage.exists(docxKey(id))
+    : (body.state !== undefined ? await regenerateDocx(next) : await storage.exists(docxKey(id)));
+  await fireWebhook(next, docxFresh);
   return next;
 }
 function metaSummary(d) {
   return { id: d.id, title: d.title, updatedAt: d.updatedAt, createdAt: d.createdAt, rev: d.rev || 0 };
 }
 
-function fireWebhook(meta) {
+// Fired on every save. `docxFresh` tells the receiver whether the .docx this
+// refers to was actually regenerated from the current HTML state (false right
+// after import, or if regeneration failed) — LegalAI should treat a webhook
+// with docxFresh:false as "html state changed, docx not guaranteed current"
+// and either wait for a later save or fetch again.
+//
+// NOTE: this wire format (docx inlined as base64 up to WEBHOOK_INLINE_MAX,
+// else a docxUrl) is this project's proposal for the write-back contract —
+// it still needs to be confirmed against whatever LegalAI's receiving webhook
+// actually expects before relying on it in production.
+async function fireWebhook(meta, docxFresh) {
   if (!WEBHOOK) return;
   try {
+    const payload = {
+      event: "save", id: meta.id, title: meta.title, rev: meta.rev, updatedAt: meta.updatedAt,
+      contractId: meta.contractId || null, tenantId: meta.tenantId || null,
+      docxFresh: !!docxFresh,
+    };
+    const docxBytes = docxFresh ? await storage.readFile(docxKey(meta.id)) : null;
+    if (docxBytes) {
+      const bytes = docxBytes;
+      if (bytes.length <= WEBHOOK_INLINE_MAX) {
+        payload.docxBase64 = bytes.toString("base64");
+      } else if (PUBLIC_BASE_URL) {
+        payload.docxUrl = `${PUBLIC_BASE_URL}/api/documents/${meta.id}/docx`;
+      }
+    }
+    const body = JSON.stringify(payload);
     const u = new URL(WEBHOOK);
     const mod = u.protocol === "https:" ? https : http;
-    const payload = JSON.stringify({ event: "save", id: meta.id, title: meta.title, rev: meta.rev, updatedAt: meta.updatedAt });
-    const req = mod.request(u, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
-      timeout: 5000,
-    }, (res) => res.resume());
-    req.on("error", (e) => console.error("webhook error:", e.message));
-    req.end(payload);
+    await new Promise((resolve) => {
+      const req = mod.request(u, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+        timeout: 5000,
+      }, (res) => { res.resume(); resolve(); });
+      req.on("error", (e) => { console.error("webhook error:", e.message); resolve(); });
+      req.end(body);
+    });
   } catch (e) { console.error("webhook error:", e.message); }
 }
 
-function authorized(req, url) {
-  if (!AUTH_TOKEN) return true;
+function credentialFrom(req, url) {
   const h = req.headers["authorization"] || "";
-  if (h === `Bearer ${AUTH_TOKEN}`) return true;
-  if (url && url.searchParams.get("token") === AUTH_TOKEN) return true;
-  return false;
+  if (h.startsWith("Bearer ")) return h.slice(7);
+  if (url) {
+    const t = url.searchParams.get("token");
+    if (t) return t;
+  }
+  return "";
+}
+// Two kinds of credential: the global AUTH_TOKEN (server-to-server — LegalAI's
+// backend calling the REST API directly, or minting scoped tokens), or a
+// short-lived scoped token minted via POST /api/auth/token (see
+// server/scopedAuth.js), bound to one tenantId/contractId/editorDocumentId.
+// `scoped` is null for the global token (full access) and the verified
+// payload for a scoped one (access limited to its own document).
+function authenticateRequest(req, url) {
+  if (!AUTH_TOKEN) return { ok: true, scoped: null };
+  const cred = credentialFrom(req, url);
+  if (cred && cred === AUTH_TOKEN) return { ok: true, scoped: null };
+  if (cred && TOKEN_SECRET) {
+    const payload = verifyToken(TOKEN_SECRET, cred);
+    if (payload) return { ok: true, scoped: payload };
+  }
+  return { ok: false, scoped: null };
+}
+// pathDocId: the :id segment of /api/documents/:id/... for the requested
+// route, or null for routes with no specific document (list, create, import,
+// mint-token, format). Scoped tokens are only valid against their own
+// document's routes; every no-doc-id route requires the global token.
+function authorized(req, url, pathDocId) {
+  const { ok, scoped } = authenticateRequest(req, url);
+  if (!ok) return false;
+  if (!scoped) return true;
+  return !!pathDocId && scoped.editorDocumentId === pathDocId;
 }
 
 // ---- server-side HTML helpers (zero-dependency) ----
@@ -170,13 +296,27 @@ function htmlToPlainText(html) {
     .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(d));
   return s.replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
+// See public/js/editor.js's countWords() for why CJK characters are counted
+// individually rather than as space-delimited words.
+const CJK_CHAR = /[㐀-䶿一-鿿豈-﫿぀-ヿ가-힣]/gu;
 function countWords(html) {
   const text = htmlToPlainText(html).trim();
-  const words = text ? text.split(/\s+/).length : 0;
-  return { words, chars: text.length };
+  const cjkCount = (text.match(CJK_CHAR) || []).length;
+  const nonCjkText = text.replace(CJK_CHAR, " ").trim();
+  const nonCjkWords = nonCjkText ? nonCjkText.split(/\s+/).length : 0;
+  const chars = text.replace(/\s/g, "").length;
+  return { words: cjkCount + nonCjkWords, chars };
 }
 function escHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+// HTTP header values must be Latin1 — a raw Chinese (or any non-ASCII) title
+// passed straight into Content-Disposition throws ERR_INVALID_CHAR and 500s
+// the request. RFC 5987's filename* carries the real UTF-8 name; filename=
+// stays as an ASCII-safe fallback for older clients that don't read filename*.
+function contentDisposition(filename) {
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "'") || "download";
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 function exportStandaloneHtml(html, title) {
   return `<!DOCTYPE html>
@@ -219,35 +359,118 @@ async function api(req, res, url) {
 
   if (p === "/api/health") return sendJSON(res, 200, { ok: true, uptime: process.uptime() });
 
-  if (!authorized(req, url)) return sendJSON(res, 401, { error: "unauthorized" });
+  // A scoped token is only valid against routes for its own document; every
+  // route with no :id in the path (list, create, import, mint-token, format)
+  // requires the global AUTH_TOKEN.
+  const pathDocId = (p.match(/^\/api\/documents\/([^/]+)/) || [])[1] || null;
+  if (!authorized(req, url, pathDocId)) return sendJSON(res, 401, { error: "unauthorized" });
 
   if (p === "/api/documents" && method === "GET") {
-    const list = fs.readdirSync(DATA)
-      .filter((f) => f.endsWith(".json") && !f.endsWith(".versions.json"))
-      .map((f) => {
-        try { return metaSummary(JSON.parse(fs.readFileSync(path.join(DATA, f), "utf8"))); }
-        catch { return null; }
-      })
-      .filter(Boolean)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+    const keys = (await storage.listKeys(".json")).filter((f) => !f.endsWith(".versions.json"));
+    const list = (await Promise.all(keys.map(async (f) => {
+      try {
+        const buf = await storage.readFile(f);
+        return buf ? metaSummary(JSON.parse(buf.toString("utf8"))) : null;
+      } catch { return null; }
+    }))).filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
     return sendJSON(res, 200, list);
   }
 
   if (p === "/api/documents" && method === "POST") {
     const body = await readJSON(req);
     const id = crypto.randomUUID();
-    const doc = writeMeta(id, { title: body.title || "Untitled", state: body.state !== undefined ? body.state : null });
+    const doc = await writeMeta(id, {
+      title: body.title || "Untitled", state: body.state !== undefined ? body.state : null,
+      tenantId: body.tenantId, contractId: body.contractId,
+    });
     return sendJSON(res, 200, doc);
   }
 
+  // Mint a short-lived, document-scoped token (see server/scopedAuth.js).
+  // Only callable with the global AUTH_TOKEN (pathDocId is null for this
+  // route, so a scoped token is never itself sufficient to mint another one).
+  // Binds tenantId/contractId onto the target document the first time either
+  // is supplied, and rejects a mismatched tenantId/contractId against a
+  // document that's already bound — this is what "single-contract scoped
+  // credential" enforcement rests on for every later request.
+  if (p === "/api/auth/token" && method === "POST") {
+    const body = await readJSON(req);
+    const editorDocumentId = body.editorDocumentId != null ? String(body.editorDocumentId) : null;
+    if (editorDocumentId) {
+      if (!validId(editorDocumentId)) return sendJSON(res, 400, { error: "bad editorDocumentId" });
+      const doc = await readMeta(editorDocumentId);
+      if (!doc) return sendJSON(res, 404, { error: "document not found" });
+      if (doc.tenantId && body.tenantId != null && String(body.tenantId) !== doc.tenantId) {
+        return sendJSON(res, 403, { error: "tenantId does not match this document's existing binding" });
+      }
+      if (doc.contractId && body.contractId != null && String(body.contractId) !== doc.contractId) {
+        return sendJSON(res, 403, { error: "contractId does not match this document's existing binding" });
+      }
+      if ((body.tenantId != null || body.contractId != null) && (!doc.tenantId || !doc.contractId)) {
+        await writeMeta(editorDocumentId, {
+          tenantId: doc.tenantId || body.tenantId, contractId: doc.contractId || body.contractId,
+        }, { skipDocxRegen: true });
+      }
+    }
+    if (!TOKEN_SECRET) {
+      return sendJSON(res, 500, { error: "no AUTH_TOKEN/TOKEN_SECRET configured on this server; scoped tokens are disabled" });
+    }
+    const { token, payload } = mintToken(TOKEN_SECRET, {
+      tenantId: body.tenantId, contractId: body.contractId, editorDocumentId, ttlSeconds: body.ttlSeconds,
+    });
+    return sendJSON(res, 200, { token, ...payload });
+  }
+
+  // Import a .docx (or a legacy .doc/.dot, converted first via LibreOffice —
+  // see server/docConvert.js): parse it server-side into HTML state right
+  // away, so a caller (e.g. LegalAI's backend, which opens the editor iframe
+  // against this id without ever going through the client's own "open file"
+  // flow) gets a document that isn't blank. A raw upload that still fails to
+  // parse as OOXML after that is rejected with a clear error instead of
+  // silently creating an empty document.
   if (p === "/api/documents/import" && method === "POST") {
     const body = await readJSON(req);
     if (!body.data) return sendJSON(res, 400, { error: "no data" });
     const id = crypto.randomUUID();
-    const title = String(body.name || "Imported").replace(/\.(docx|txt|html?)$/i, "").slice(0, 300);
-    fs.writeFileSync(docxPath(id), Buffer.from(body.data, "base64"));
-    const doc = writeMeta(id, { title, state: null });
-    return sendJSON(res, 200, { id: doc.id, title: doc.title, hasDocx: true });
+    const fallbackTitle = String(body.name || "Imported").replace(/\.(docx?|dot)$/i, "").slice(0, 300);
+    let bytes = Buffer.from(body.data, "base64");
+
+    const docx = await docxNode();
+    if (docx.isLegacyOleFile(bytes)) {
+      try {
+        bytes = await convertDocToDocx(bytes, body.name);
+      } catch (e) {
+        const unavailable = e.code === "SOFFICE_UNAVAILABLE";
+        return sendJSON(res, unavailable ? 501 : 422, {
+          error: unavailable
+            ? "this server has no .doc converter installed"
+            : "could not convert this legacy .doc file: " + e.message,
+          hint: unavailable
+            ? "install LibreOffice (soffice) on the server, or convert the file to .docx manually and re-upload"
+            : "the file may be corrupt, password-protected, or use an unsupported legacy format",
+        });
+      }
+    }
+
+    let parsed;
+    try {
+      parsed = await docx.importDocx(toArrayBuffer(bytes));
+    } catch (e) {
+      return sendJSON(res, 422, {
+        error: "could not parse .docx: " + e.message,
+        hint: "only .docx (OOXML) is supported — legacy binary .doc files must be converted to .docx before import",
+      });
+    }
+
+    await storage.writeFile(docxKey(id), bytes);
+    const doc = await writeMeta(id, {
+      title: parsed.title || fallbackTitle,
+      state: parsed.html,
+      pageSetup: parsed.pageSetup,
+      comments: parsed.comments,
+      tenantId: body.tenantId, contractId: body.contractId,
+    }, { skipDocxRegen: true });
+    return sendJSON(res, 200, { id: doc.id, title: doc.title, hasDocx: true, rev: doc.rev });
   }
 
   let m = p.match(/^\/api\/documents\/([^/]+)$/);
@@ -255,22 +478,22 @@ async function api(req, res, url) {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
     if (method === "GET") {
-      const doc = readMeta(id);
+      const doc = await readMeta(id);
       return doc ? sendJSON(res, 200, doc) : sendJSON(res, 404, { error: "not found" });
     }
     if (method === "PUT") {
-      const existing = readMeta(id);
+      const existing = await readMeta(id);
       if (!existing) return sendJSON(res, 404, { error: "not found" });
       const body = await readJSON(req);
       // Optimistic concurrency: caller may send the rev it based its edit on.
       if (body.baseRev != null && body.baseRev !== (existing.rev || 0)) {
         return sendJSON(res, 409, { error: "conflict", current: existing });
       }
-      return sendJSON(res, 200, writeMeta(id, body));
+      return sendJSON(res, 200, await writeMeta(id, body));
     }
     if (method === "DELETE") {
-      for (const f of [docPath(id), docxPath(id), versionsPath(id)]) {
-        if (fs.existsSync(f)) fs.unlinkSync(f);
+      for (const k of [docKey(id), docxKey(id), versionsKey(id)]) {
+        await storage.deleteFile(k);
       }
       closeRoom(id);
       return sendJSON(res, 200, { ok: true });
@@ -284,16 +507,17 @@ async function api(req, res, url) {
     if (method === "PUT") {
       const body = await readJSON(req);
       if (!body.data) return sendJSON(res, 400, { error: "no data" });
-      fs.writeFileSync(docxPath(id), Buffer.from(body.data, "base64"));
+      await storage.writeFile(docxKey(id), Buffer.from(body.data, "base64"));
       return sendJSON(res, 200, { ok: true });
     }
     if (method === "GET") {
-      if (!fs.existsSync(docxPath(id))) return sendJSON(res, 404, { error: "no docx" });
-      const meta = readMeta(id);
-      const name = ((meta && meta.title) || id).replace(/[^\w一-鿿 .-]+/g, "_");
-      return send(res, 200, fs.readFileSync(docxPath(id)), {
+      const docxBytes = await storage.readFile(docxKey(id));
+      if (!docxBytes) return sendJSON(res, 404, { error: "no docx" });
+      const meta = await readMeta(id);
+      const name = (meta && meta.title) || id;
+      return send(res, 200, docxBytes, {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": `attachment; filename="${name}.docx"`,
+        "Content-Disposition": contentDisposition(`${name}.docx`),
       });
     }
   }
@@ -302,7 +526,7 @@ async function api(req, res, url) {
   if (m && method === "GET") {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const versions = readVersions(id).map((v, i) => ({
+    const versions = (await readVersions(id)).map((v, i) => ({
       index: i, t: v.t, rev: v.rev, title: v.title, size: v.state ? v.state.length : 0,
     }));
     return sendJSON(res, 200, versions);
@@ -312,7 +536,7 @@ async function api(req, res, url) {
   if (m && method === "GET") {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const v = readVersions(id)[Number(m[2])];
+    const v = (await readVersions(id))[Number(m[2])];
     return v ? sendJSON(res, 200, v) : sendJSON(res, 404, { error: "not found" });
   }
 
@@ -320,13 +544,13 @@ async function api(req, res, url) {
   if (m && method === "POST") {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const existing = readMeta(id);
+    const existing = await readMeta(id);
     if (!existing) return sendJSON(res, 404, { error: "not found" });
     const body = await readJSON(req);
-    const v = readVersions(id)[Number(body.index)];
+    const v = (await readVersions(id))[Number(body.index)];
     if (!v) return sendJSON(res, 404, { error: "version not found" });
-    snapshotVersion(id, existing, true); // keep the pre-restore state recoverable
-    const doc = writeMeta(id, { title: v.title, state: v.state, pageSetup: v.pageSetup, comments: v.comments || [] }, { forceVersion: true });
+    await snapshotVersion(id, existing, true); // keep the pre-restore state recoverable
+    const doc = await writeMeta(id, { title: v.title, state: v.state, pageSetup: v.pageSetup, comments: v.comments || [] }, { forceVersion: true });
     broadcast(id, null, { type: "update", from: { id: "server", user: "Version restore", color: "#666" }, rev: doc.rev, title: doc.title, state: doc.state, pageSetup: doc.pageSetup, comments: doc.comments });
     return sendJSON(res, 200, doc);
   }
@@ -342,7 +566,7 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/content$/))) {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     if (method === "GET") {
       const html = (doc.state || "").replace(/^(<p><br><\/p>\s*)+$/, "");
@@ -352,7 +576,7 @@ async function api(req, res, url) {
     }
     if (method === "PUT") {
       const body = await readJSON(req);
-      const updated = writeMeta(id, { state: body.html !== undefined ? body.html : doc.state, title: body.title !== undefined ? body.title : doc.title });
+      const updated = await writeMeta(id, { state: body.html !== undefined ? body.html : doc.state, title: body.title !== undefined ? body.title : doc.title });
       broadcast(id, null, { type: "update", from: { id: "api", user: "REST API", color: "#666" }, rev: updated.rev, title: updated.title, state: updated.state, pageSetup: updated.pageSetup, comments: updated.comments });
       return sendJSON(res, 200, { ok: true, rev: updated.rev });
     }
@@ -363,7 +587,7 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/text$/))) {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     return sendJSON(res, 200, { text: htmlToPlainText(doc.state || "") });
   }
@@ -372,14 +596,14 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/insert-html$/)) && method === "POST") {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     if (doc.state == null) doc.state = "<p><br></p>";
     const body = await readJSON(req);
     const fragment = String(body.html || "").trim();
     if (!fragment) return sendJSON(res, 400, { error: "html required" });
     const state = doc.state.replace(/<p><br><\/p>\s*$/, "") + fragment + "<p><br></p>";
-    const updated = writeMeta(id, { state });
+    const updated = await writeMeta(id, { state });
     broadcast(id, null, { type: "update", from: { id: "api", user: "REST API", color: "#666" }, rev: updated.rev, title: updated.title, state: updated.state });
     return sendJSON(res, 200, { ok: true, rev: updated.rev });
   }
@@ -389,14 +613,14 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/insert-text$/)) && method === "POST") {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     const body = await readJSON(req);
     const text = String(body.text || "").trim();
     if (!text) return sendJSON(res, 400, { error: "text required" });
     const html = text.split(/\r?\n/).filter(Boolean).map((l) => `<p>${escHtml(l)}</p>`).join("");
     const state = (doc.state || "<p><br></p>").replace(/<p><br><\/p>\s*$/, "") + html + "<p><br></p>";
-    const updated = writeMeta(id, { state });
+    const updated = await writeMeta(id, { state });
     broadcast(id, null, { type: "update", from: { id: "api", user: "REST API", color: "#666" }, rev: updated.rev, title: updated.title, state: updated.state });
     return sendJSON(res, 200, { ok: true, rev: updated.rev });
   }
@@ -405,10 +629,10 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/title$/)) && method === "PUT") {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     const body = await readJSON(req);
-    const updated = writeMeta(id, { title: String(body.title || doc.title).slice(0, 300) });
+    const updated = await writeMeta(id, { title: String(body.title || doc.title).slice(0, 300) });
     return sendJSON(res, 200, { ok: true, rev: updated.rev, title: updated.title });
   }
 
@@ -416,7 +640,7 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/meta$/)) && method === "GET") {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     const wc = countWords(doc.state || "");
     return sendJSON(res, 200, {
@@ -429,13 +653,13 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/meta$/)) && method === "PUT") {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     const body = await readJSON(req);
     const patch = {};
     if (body.title !== undefined) patch.title = String(body.title).slice(0, 300);
     if (body.pageSetup !== undefined) patch.pageSetup = body.pageSetup;
-    const updated = writeMeta(id, patch);
+    const updated = await writeMeta(id, patch);
     return sendJSON(res, 200, { ok: true, rev: updated.rev, title: updated.title, pageSetup: updated.pageSetup });
   }
 
@@ -443,24 +667,26 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/export$/))) {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     const fmt = url.searchParams.get("fmt") || "docx";
-    const title = (doc.title || "document").replace(/[^\w .-]/g, "_");
+    const title = doc.title || "document";
     try {
       if (fmt === "txt") {
         const text = htmlToPlainText(doc.state || "");
-        return send(res, 200, text, { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": `attachment; filename="${title}.txt"` });
+        return send(res, 200, text, { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": contentDisposition(`${title}.txt`) });
       }
       if (fmt === "html") {
         const standalone = exportStandaloneHtml(doc.state || "", doc.title || "Document");
-        return send(res, 200, standalone, { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": `attachment; filename="${title}.html"` });
+        return send(res, 200, standalone, { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": contentDisposition(`${title}.html`) });
       }
       // docx — rely on the editor .docx binary if stored
-      if (fmt === "docx" && fs.existsSync(docxPath(id))) {
-        return send(res, 200, fs.readFileSync(docxPath(id)), {
+      if (fmt === "docx") {
+        const docxBytes = await storage.readFile(docxKey(id));
+        if (!docxBytes) return sendJSON(res, 400, { error: "unsupported or unavailable format: docx" });
+        return send(res, 200, docxBytes, {
           "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "Content-Disposition": `attachment; filename="${title}.docx"`,
+          "Content-Disposition": contentDisposition(`${title}.docx`),
         });
       }
       return sendJSON(res, 400, { error: `unsupported or unavailable format: ${fmt}` });
@@ -473,7 +699,7 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/comments$/))) {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     if (method === "GET") return sendJSON(res, 200, { comments: doc.comments || [] });
     if (method === "POST") {
@@ -482,7 +708,7 @@ async function api(req, res, url) {
       if (!text) return sendJSON(res, 400, { error: "text required" });
       const c = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), author: body.author || "API", text, createdAt: Date.now(), resolved: false, replies: [] };
       const comments = [...(doc.comments || []), c];
-      writeMeta(id, { comments });
+      await writeMeta(id, { comments });
       return sendJSON(res, 200, { ok: true, id: c.id });
     }
     return sendJSON(res, 405, { error: "method not allowed" });
@@ -494,13 +720,13 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/track-changes$/))) {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     if (method === "GET") return sendJSON(res, 200, { enabled: !!doc.trackChanges });
     if (method === "PUT") {
       const body = await readJSON(req);
       const on = body.enabled === true || body.enabled === "true";
-      writeMeta(id, { trackChanges: on });
+      await writeMeta(id, { trackChanges: on });
       return sendJSON(res, 200, { ok: true, enabled: on });
     }
     return sendJSON(res, 405, { error: "method not allowed" });
@@ -512,7 +738,7 @@ async function api(req, res, url) {
   if ((m = p.match(/^\/api\/documents\/([^/]+)\/page-setup$/))) {
     const id = m[1];
     if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
-    const doc = readMeta(id);
+    const doc = await readMeta(id);
     if (!doc) return sendJSON(res, 404, { error: "not found" });
     if (method === "GET") return sendJSON(res, 200, { pageSetup: doc.pageSetup || null });
     if (method === "PUT") {
@@ -521,7 +747,7 @@ async function api(req, res, url) {
       if (body.size) merged.size = body.size;
       if (body.orientation) merged.orientation = body.orientation;
       if (body.margins) merged.margins = { ...((doc.pageSetup && doc.pageSetup.margins) || {}), ...body.margins };
-      writeMeta(id, { pageSetup: merged });
+      await writeMeta(id, { pageSetup: merged });
       return sendJSON(res, 200, { ok: true, pageSetup: merged });
     }
     return sendJSON(res, 405, { error: "method not allowed" });
@@ -569,8 +795,48 @@ const server = http.createServer(async (req, res) => {
 // ============================================================
 // WebSocket (RFC 6455) — hand-rolled, no dependencies.
 // Rooms keyed by document id; relays presence, updates, cursors.
+//
+// Cross-instance sync: `rooms` is only ever local to this process, so with
+// multiple replicas behind a load balancer, two editors on the same document
+// but different instances would never see each other's changes. When
+// REDIS_URL is set, broadcast() also publishes to a shared Redis pub/sub
+// channel; every instance (including the publisher) is subscribed, and the
+// subscriber delivers to that instance's own local clients. The publisher
+// tags its own messages with its instance id and skips re-delivering them
+// when they come back around the subscription, since it already delivered
+// them locally and synchronously at publish time — this keeps same-instance
+// delivery instant and independent of Redis being up.
+//
+// NOTE — known scope limit: presence (roomUsers/"who's online") is NOT
+// aggregated across instances yet, only content/cursor updates are. A user
+// connected to instance A won't see presence for a user on instance B. Doing
+// that correctly needs a shared, heartbeated registry (e.g. a Redis hash per
+// document with staleness sweeping) — left as a follow-up since content sync
+// is the correctness-critical piece and presence is view-only.
 // ============================================================
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const INSTANCE_ID = crypto.randomUUID();
+const REDIS_CHANNEL = "we:broadcast";
+let redisPub = null;
+let redisSub = null;
+async function initRedis() {
+  const url = process.env.REDIS_URL;
+  if (!url) return;
+  const { createClient } = require("redis");
+  redisPub = createClient({ url });
+  redisSub = redisPub.duplicate();
+  redisPub.on("error", (e) => console.error("redis (pub) error:", e.message));
+  redisSub.on("error", (e) => console.error("redis (sub) error:", e.message));
+  await redisPub.connect();
+  await redisSub.connect();
+  await redisSub.subscribe(REDIS_CHANNEL, (message) => {
+    let msg;
+    try { msg = JSON.parse(message); } catch { return; }
+    if (msg.originInstanceId === INSTANCE_ID) return; // already delivered locally at publish time
+    broadcastLocal(msg.docId, msg.exceptClientId, msg.obj);
+  });
+  console.log("redis pub/sub connected — cross-instance collab sync enabled");
+}
 const rooms = new Map(); // docId -> Set<client>
 const COLORS = ["#e91e63", "#2196f3", "#4caf50", "#ff9800", "#9c27b0", "#00bcd4", "#795548", "#607d8b"];
 let clientSeq = 0;
@@ -600,17 +866,29 @@ function roomUsers(docId) {
   if (!set) return [];
   return [...set].map((c) => ({ id: c.id, user: c.user, color: c.color }));
 }
-function broadcast(docId, exceptClient, obj) {
+function broadcastLocal(docId, exceptClientId, obj) {
   const set = rooms.get(docId);
   if (!set) return;
-  for (const c of set) if (c !== exceptClient) wsSend(c, obj);
+  for (const c of set) if (c.id !== exceptClientId) wsSend(c, obj);
+}
+function broadcast(docId, exceptClient, obj) {
+  const exceptClientId = exceptClient ? exceptClient.id : null;
+  broadcastLocal(docId, exceptClientId, obj);
+  if (redisPub && redisPub.isReady) {
+    redisPub.publish(REDIS_CHANNEL, JSON.stringify({ docId, exceptClientId, obj, originInstanceId: INSTANCE_ID }))
+      .catch((e) => console.error("redis publish error:", e.message));
+  }
 }
 function leaveRoom(client) {
   const set = rooms.get(client.docId);
   if (!set) return;
   set.delete(client);
   if (set.size === 0) rooms.delete(client.docId);
-  else broadcast(client.docId, null, { type: "presence", users: roomUsers(client.docId) });
+  // presence is instance-local only (see note above initRedis) — relaying it
+  // through Redis would overwrite other instances' local user lists instead
+  // of merging with them, so this deliberately uses broadcastLocal, not
+  // broadcast.
+  else broadcastLocal(client.docId, null, { type: "presence", users: roomUsers(client.docId) });
 }
 function closeRoom(docId) {
   const set = rooms.get(docId);
@@ -624,13 +902,22 @@ function handleMessage(client, text) {
   if (msg.type === "hello") {
     const docId = String(msg.docId || "");
     if (!validId(docId)) return;
+    // A scoped token's WS connection is only allowed into the one document
+    // it was minted for — the raw upgrade handshake accepted any valid
+    // scoped token (its target doc isn't known until this "hello"), so this
+    // is where per-document enforcement actually happens.
+    if (client.scopedPayload && client.scopedPayload.editorDocumentId !== docId) {
+      wsSend(client, { type: "error", error: "token not valid for this document" });
+      try { client.socket.destroy(); } catch {}
+      return;
+    }
     if (client.docId) leaveRoom(client);
     client.docId = docId;
     client.user = String(msg.user || "Guest").slice(0, 60);
     if (!rooms.has(docId)) rooms.set(docId, new Set());
     rooms.get(docId).add(client);
     wsSend(client, { type: "welcome", id: client.id, color: client.color, users: roomUsers(docId) });
-    broadcast(docId, client, { type: "presence", users: roomUsers(docId) });
+    broadcastLocal(docId, client.id, { type: "presence", users: roomUsers(docId) }); // instance-local only, see note above initRedis
     return;
   }
   if (!client.docId) return;
@@ -647,7 +934,12 @@ function handleMessage(client, text) {
 
 server.on("upgrade", (req, socket) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  if (url.pathname !== "/ws" || !authorized(req, url)) {
+  // The target document isn't known yet at handshake time (it arrives later
+  // in the "hello" message), so any validly-signed credential — global token
+  // or a scoped token for ANY document — passes here; per-document scoping
+  // is enforced in handleMessage's "hello" case once the docId is known.
+  const auth = authenticateRequest(req, url);
+  if (url.pathname !== "/ws" || !auth.ok) {
     socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return;
   }
   const key = req.headers["sec-websocket-key"];
@@ -660,7 +952,12 @@ server.on("upgrade", (req, socket) => {
   );
   socket.setNoDelay(true);
 
-  const client = { id: "u" + (++clientSeq), color: COLORS[clientSeq % COLORS.length], socket, docId: null, user: "Guest" };
+  const client = {
+    // instance-prefixed so client ids stay unique across replicas — the
+    // Redis relay's exceptClientId matching depends on that uniqueness.
+    id: `${INSTANCE_ID.slice(0, 8)}-u${++clientSeq}`, color: COLORS[clientSeq % COLORS.length], socket, docId: null, user: "Guest",
+    scopedPayload: auth.scoped,
+  };
   let buf = Buffer.alloc(0);
   let fragments = [];
 
@@ -727,4 +1024,9 @@ setInterval(() => {
   }
 }, 30000).unref();
 
-server.listen(PORT, HOST, () => console.log(`word-editor on http://${HOST}:${PORT}${AUTH_TOKEN ? " (auth enabled)" : ""}`));
+// Redis connects in the background — if it's slow or unreachable, the server
+// still starts and serves single-instance traffic normally (cross-instance
+// sync is the only thing that degrades, same graceful-degradation approach
+// as the save webhook and docx regeneration above).
+initRedis().catch((e) => console.error("redis init failed (continuing without cross-instance sync):", e.message));
+server.listen(PORT, HOST, () => console.log(`word-editor on http://${HOST}:${PORT}${AUTH_TOKEN ? " (auth enabled)" : ""}${storage.kind === "s3" ? " (s3 storage)" : ""}`));

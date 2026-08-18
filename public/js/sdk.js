@@ -80,8 +80,15 @@
     if (opts.statusbar === false) q.set("statusbar", "0");
     if (opts.user) q.set("user", opts.user);
 
+    // authToken (a scoped token from POST /api/auth/token, or the global
+    // AUTH_TOKEN) goes in the URL FRAGMENT, not the query string: fragments
+    // are never sent in the HTTP request for the iframe document itself, so
+    // this credential doesn't hit server access logs or Referer headers the
+    // way a query param would. main.js reads it client-side from
+    // location.hash on load — see setAuthToken() there.
+    const hash = opts.authToken ? `#token=${encodeURIComponent(opts.authToken)}` : "";
     const iframe = document.createElement("iframe");
-    iframe.src = `${baseUrl}/?${q.toString()}`;
+    iframe.src = `${baseUrl}/?${q.toString()}${hash}`;
     iframe.style.cssText = "width:100%;height:100%;border:none;display:block;min-height:400px";
     iframe.allow = "clipboard-read; clipboard-write";
     container.appendChild(iframe);
@@ -142,6 +149,10 @@
       find: (query, o) => call("find", { query, ...o }),
       replaceAll: (query, replacement, o) => call("replaceAll", { query, replacement, ...o }),
       focus: () => call("focus"),
+      // Rotate the auth token in an already-open editor (e.g. before a
+      // short-lived scoped token expires). Initial load should use the
+      // `authToken` init() option instead — see the comment above iframe.src.
+      setAuthToken: (token) => call("setAuthToken", { token }),
       undo: () => call("undo"),
       redo: () => call("redo"),
       canUndo: () => call("canUndo"),

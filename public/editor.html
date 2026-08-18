@@ -11,51 +11,53 @@
     <header id="topbar">
       <div class="brand"><span class="brand-badge" title="DocEditor">D</span></div>
       <div class="docbar">
-        <input id="doc-title" type="text" placeholder="Untitled" />
+        <input id="doc-title" type="text" placeholder="Untitled" data-i18n-placeholder="doc.untitled" />
         <div class="dropdown" id="file-menu-wrap">
-          <button id="btn-file" title="File menu">File ▾</button>
+          <button id="btn-file" title="File menu" data-i18n-title="menu.fileTitle" data-i18n="menu.file">File ▾</button>
           <div class="dropdown-menu menu-vertical hidden" id="file-menu">
-            <button id="btn-new" title="New document">New</button>
-            <button id="btn-open" title="Open .docx / .txt / .html / .pdf file">Open…</button>
+            <button id="btn-new" title="New document" data-i18n-title="menu.newTitle" data-i18n="menu.new">New</button>
+            <button id="btn-open" title="Open .docx / .txt / .html / .pdf file" data-i18n-title="menu.openTitle" data-i18n="menu.open">Open…</button>
             <div class="dropdown submenu" id="export-menu-wrap">
-              <button id="btn-export" title="Download / export">Export ▸</button>
+              <button id="btn-export" title="Download / export" data-i18n-title="menu.exportTitle" data-i18n="menu.export">Export ▸</button>
               <div class="dropdown-menu menu-vertical hidden" id="export-menu">
-                <button data-fmt="docx" title="Export as Word .docx (Office Open XML)">Word (.docx)</button>
-                <button data-fmt="pdf" title="Print to PDF via the browser print dialog">PDF (print)</button>
-                <button data-fmt="html" title="Save as a self-contained .html web page">Web page (.html)</button>
-                <button data-fmt="txt" title="Export plain text content">Plain text (.txt)</button>
+                <button data-fmt="docx" title="Export as Word .docx (Office Open XML)" data-i18n-title="menu.exportDocxTitle" data-i18n="menu.exportDocx">Word (.docx)</button>
+                <button data-fmt="pdf" title="Print to PDF via the browser print dialog" data-i18n-title="menu.exportPdfTitle" data-i18n="menu.exportPdf">PDF (print)</button>
+                <button data-fmt="html" title="Save as a self-contained .html web page" data-i18n-title="menu.exportHtmlTitle" data-i18n="menu.exportHtml">Web page (.html)</button>
+                <button data-fmt="txt" title="Export plain text content" data-i18n-title="menu.exportTxtTitle" data-i18n="menu.exportTxt">Plain text (.txt)</button>
               </div>
             </div>
-            <button id="btn-list" title="Saved documents">Library…</button>
-            <button id="btn-print" title="Print / PDF">Print…</button>
+            <button id="btn-list" title="Saved documents" data-i18n-title="menu.libraryTitle" data-i18n="menu.library">Library…</button>
+            <button id="btn-print" title="Print / PDF" data-i18n-title="menu.printTitle" data-i18n="menu.print">Print…</button>
             <div class="menu-sep"></div>
-            <button id="btn-close" title="Close the current document or PDF and start fresh">Close file</button>
+            <button id="btn-close" title="Close the current document or PDF and start fresh" data-i18n-title="menu.closeFileTitle" data-i18n="menu.closeFile">Close file</button>
+            <div class="menu-sep"></div>
+            <button id="btn-lang" title="Switch language"></button>
           </div>
         </div>
         <div class="dropdown" id="insert-menu-wrap">
-          <button id="btn-insert" title="Insert menu">Insert ▾</button>
+          <button id="btn-insert" title="Insert menu" data-i18n-title="menu.insertTitle" data-i18n="menu.insert">Insert ▾</button>
           <div class="dropdown-menu menu-vertical hidden" id="insert-menu">
-            <button data-ins="pagebreak" title="Insert a page break at the cursor">Page break</button>
-            <button data-ins="blankpage" title="Insert a blank page">Blank page</button>
+            <button data-ins="pagebreak" title="Insert a page break at the cursor" data-i18n-title="menu.pageBreakTitle" data-i18n="menu.pageBreak">Page break</button>
+            <button data-ins="blankpage" title="Insert a blank page" data-i18n-title="menu.blankPageTitle" data-i18n="menu.blankPage">Blank page</button>
             <div class="menu-sep"></div>
-            <button data-ins="picture" title="Insert an image from your computer">Picture…</button>
-            <button data-ins="table" title="Insert a table with chosen rows / columns">Table…</button>
-            <button data-ins="link" title="Insert or edit a hyperlink">Link…</button>
-            <button data-ins="hr" title="Insert a horizontal rule">Horizontal line</button>
-            <button data-ins="symbol" title="Insert a special character (© · π → …)">Symbol…</button>
+            <button data-ins="picture" title="Insert an image from your computer" data-i18n-title="menu.pictureTitle" data-i18n="menu.picture">Picture…</button>
+            <button data-ins="table" title="Insert a table with chosen rows / columns" data-i18n-title="menu.tableTitle" data-i18n="menu.table">Table…</button>
+            <button data-ins="link" title="Insert or edit a hyperlink" data-i18n-title="menu.linkTitle" data-i18n="menu.link">Link…</button>
+            <button data-ins="hr" title="Insert a horizontal rule" data-i18n-title="menu.hrTitle" data-i18n="menu.hr">Horizontal line</button>
+            <button data-ins="symbol" title="Insert a special character (© · π → …)" data-i18n-title="menu.symbolTitle" data-i18n="menu.symbol">Symbol…</button>
             <div class="menu-sep"></div>
-            <button data-ins="wordart" title="Insert stylized WordArt text">WordArt…</button>
-            <button data-ins="shape" title="Insert a shape (rectangle, arrow, star, …)">Shape…</button>
+            <button data-ins="wordart" title="Insert stylized WordArt text" data-i18n-title="menu.wordartTitle" data-i18n="menu.wordart">WordArt…</button>
+            <button data-ins="shape" title="Insert a shape (rectangle, arrow, star, …)" data-i18n-title="menu.shapeTitle" data-i18n="menu.shape">Shape…</button>
             <div class="menu-sep"></div>
-            <button data-ins="header" title="Edit the document header">Header</button>
-            <button data-ins="footer" title="Edit the document footer">Footer</button>
-            <button data-ins="pagenum" title="Insert page numbers (top / bottom, left / center / right)">Page number…</button>
+            <button data-ins="header" title="Edit the document header" data-i18n-title="menu.headerTitle" data-i18n="menu.header">Header</button>
+            <button data-ins="footer" title="Edit the document footer" data-i18n-title="menu.footerTitle" data-i18n="menu.footer">Footer</button>
+            <button data-ins="pagenum" title="Insert page numbers (top / bottom, left / center / right)" data-i18n-title="menu.pageNumberTitle" data-i18n="menu.pageNumber">Page number…</button>
           </div>
         </div>
-        <button id="btn-comments" title="Comments panel">Comments</button>
-        <button id="btn-review" title="Track changes / review panel">Review</button>
-        <button id="btn-history" title="Version history">History</button>
-        <span id="save-status" class="status idle">ready</span>
+        <button id="btn-comments" title="Comments panel" data-i18n-title="menu.commentsTitle" data-i18n="menu.comments">Comments</button>
+        <button id="btn-review" title="Track changes / review panel" data-i18n-title="menu.reviewTitle" data-i18n="menu.review">Review</button>
+        <button id="btn-history" title="Version history" data-i18n-title="menu.historyTitle" data-i18n="menu.history">History</button>
+        <span id="save-status" class="status idle" data-i18n="status.ready">ready</span>
         <span id="presence" class="presence"></span>
       </div>
     </header>
@@ -67,11 +69,11 @@
 
     <main id="editor-wrap">
       <div id="library" class="panel hidden">
-        <h3>Saved documents</h3>
+        <h3 data-i18n="library.title">Saved documents</h3>
         <ul id="library-items"></ul>
       </div>
       <div id="history" class="panel hidden">
-        <h3>Version history</h3>
+        <h3 data-i18n="history.title">Version history</h3>
         <ul id="history-items"></ul>
       </div>
       <div id="page-outer">
@@ -81,15 +83,15 @@
       </div>
       <div id="pdf-view" class="hidden"></div>
       <div id="comments-panel" class="panel panel-right hidden">
-        <h3>Comments</h3>
+        <h3 data-i18n="menu.comments">Comments</h3>
         <ul id="comments-items"></ul>
       </div>
       <div id="review-panel" class="panel panel-right hidden">
-        <h3>Review — track changes</h3>
-        <label class="review-toggle"><input type="checkbox" id="track-toggle" /> Track changes (Ctrl+Shift+E)</label>
+        <h3 data-i18n="review.title">Review — track changes</h3>
+        <label class="review-toggle"><input type="checkbox" id="track-toggle" /> <span data-i18n="review.trackToggleLabel">Track changes (Ctrl+Shift+E)</span></label>
         <div class="review-actions">
-          <button id="btn-accept-all">Accept all</button>
-          <button id="btn-reject-all">Reject all</button>
+          <button id="btn-accept-all" data-i18n="review.acceptAll">Accept all</button>
+          <button id="btn-reject-all" data-i18n="review.rejectAll">Reject all</button>
         </div>
         <ul id="review-items"></ul>
       </div>
@@ -100,7 +102,7 @@
       <span id="pagecount">1 page</span>
       <span id="doc-info"></span>
       <span class="grow"></span>
-      <label class="zoom-label">Zoom
+      <label class="zoom-label"><span data-i18n="toolbar.zoom">Zoom</span>
         <select id="zoom">
           <option value="0.75">75%</option>
           <option value="1" selected>100%</option>
@@ -108,7 +110,7 @@
           <option value="1.5">150%</option>
         </select>
       </label>
-      <label class="zoom-label"><input type="checkbox" id="spellcheck-toggle" checked /> Spellcheck</label>
+      <label class="zoom-label"><input type="checkbox" id="spellcheck-toggle" checked /> <span data-i18n="toolbar.spellcheck">Spellcheck</span></label>
     </footer>
 
     <input id="file-input" type="file" accept=".docx,.txt,.htm,.html,.pdf" class="hidden" />

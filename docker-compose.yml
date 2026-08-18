@@ -1,3 +1,19 @@
+# Default `docker compose up` still runs the simple single-instance setup
+# (local disk storage, no Redis) — nothing below changes that path.
+#
+# For multi-replica deployment (object storage + cross-instance collab sync),
+# bring up the "multi-instance" profile instead, which adds MinIO (S3-compatible
+# storage — swap for your real S3/OSS endpoint in production), Redis, and a
+# second word-editor replica sharing both:
+#
+#   docker compose --profile multi-instance up --build
+#
+# That's also how P0-3 (storage abstraction + Redis pub/sub relay) was
+# validated locally before relying on it — see the two replicas (on host
+# ports 3011 and 3012, kept separate from the default word-editor service's
+# 3001 so both profiles can run side by side) exercising the same document
+# through both a REST call and two separate WebSocket connections.
+
 services:
   word-editor:
     build: .
@@ -9,5 +25,70 @@ services:
       - word-editor-data:/app/data
     restart: unless-stopped
 
+  # ---- multi-instance profile ----
+  minio:
+    image: minio/minio
+    container_name: word-editor-minio
+    profiles: ["multi-instance"]
+    command: server /data --console-address ":9090"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "127.0.0.1:19000:9000"
+      - "127.0.0.1:19090:9090"
+    volumes:
+      - word-editor-minio-data:/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: word-editor-redis
+    profiles: ["multi-instance"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+
+  word-editor-a:
+    build: .
+    image: word-editor
+    container_name: word-editor-a
+    profiles: ["multi-instance"]
+    depends_on: [minio, redis]
+    environment:
+      STORAGE_DRIVER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: word-editor
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_REGION: us-east-1
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "127.0.0.1:3011:3001"
+    restart: unless-stopped
+
+  word-editor-b:
+    build: .
+    image: word-editor
+    container_name: word-editor-b
+    profiles: ["multi-instance"]
+    depends_on: [minio, redis]
+    environment:
+      STORAGE_DRIVER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: word-editor
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_REGION: us-east-1
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "127.0.0.1:3012:3001"
+    restart: unless-stopped
+    # In production, put a load balancer in front of the replicas instead of
+    # exposing both ports directly — this compose file just needs both
+    # reachable individually so the multi-instance behavior can be verified
+    # against each one.
+
 volumes:
   word-editor-data:
+  word-editor-minio-data:

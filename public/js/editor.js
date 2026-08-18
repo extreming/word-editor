@@ -1,6 +1,7 @@
 // editor.js — contentEditable editing surface: toolbar, dialogs, find & replace,
 // table operations, format painter, sanitization, custom context menu,
 // track changes engine, comment anchors. No libraries.
+import { t } from "./i18n.js";
 
 const FONTS = [
   "Arial", "Calibri", "Cambria", "Courier New", "Garamond", "Georgia",
@@ -95,8 +96,39 @@ function exec(cmd, val) { document.execCommand(cmd, false, val); }
 function escText(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-function fireInput(editor) {
-  editor.dispatchEvent(new Event("input", { bubbles: true }));
+// Scrolls only the editor's own scroll container (#editor-wrap), never the
+// page/outer iframe — native scrollIntoView walks every scrollable ancestor
+// it finds, which in an embedded iframe can drag the host page or a
+// fixed/sticky toolbar out of view along with it. Shared by find & replace
+// (scrolling to a match) and track changes (scrolling to a newly-created
+// revision, so edits made off-screen — e.g. via the SDK, or at the end of a
+// long document — don't require the user to manually hunt for them).
+export function scrollElementIntoEditorView(editor, target) {
+  if (!target) return;
+  const container = editor.closest("#editor-wrap");
+  if (!container) { target.scrollIntoView({ block: "center" }); return; }
+  const elRect = target.getBoundingClientRect();
+  const contRect = container.getBoundingClientRect();
+  const delta = elRect.top - contRect.top - contRect.height / 2 + elRect.height / 2;
+  // Instant, not smooth: a smooth scrollBy's animation depends on rAF
+  // ticking, which is unreliable in some automation/headless contexts and
+  // under reduced-motion settings — a direct assignment always lands.
+  container.scrollTop += delta;
+}
+// `inputType` matters beyond semantics: history.js's undo coalescing keys
+// off ev.inputType (INSERT/DELETE sets of real browser inputType strings) to
+// decide whether consecutive edits merge into one undo step, the same way
+// normal native typing does. A plain Event has no inputType at all, so any
+// caller that didn't pass one here gets treated as "not typing" — each call
+// becomes its own separate undo step, which is correct for discrete actions
+// (delete a table, remove a link, accept a change) but was, before this,
+// *also* what every track-changes insertion/deletion got by default: a
+// multi-step "apply this as a tracked edit" flow (e.g. delete old text +
+// insert new text) required a separate Ctrl+Z per step instead of undoing as
+// one. Track-changes call sites now pass the inputType real typing/deleting
+// would produce so they coalesce the same way normal edits do.
+function fireInput(editor, inputType = "") {
+  editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType }));
 }
 function unwrapNode(node) {
   const parent = node.parentNode;
@@ -332,11 +364,11 @@ export function openLinkDialog(editor) {
   const selText = sel.rangeCount ? sel.toString() : "";
   const textIn = el("input", { type: "text", value: selText });
   const urlIn = el("input", { type: "text", placeholder: "https://…" });
-  const body = el("div", {}, [field("Text", textIn), field("URL", urlIn)]);
-  openDialog("Insert link", body, [
-    { label: "Cancel" },
+  const body = el("div", {}, [field(t("dlg.text"), textIn), field(t("dlg.url"), urlIn)]);
+  openDialog(t("link.title"), body, [
+    { label: t("dlg.cancel") },
     {
-      label: "Insert", primary: true,
+      label: t("dlg.insert"), primary: true,
       onClick: () => {
         let url = urlIn.value.trim();
         if (!url) return false;
@@ -357,13 +389,13 @@ export function openTableDialog(editor) {
   const colsIn = el("input", { type: "number", value: "3", min: "1", max: "20" });
   const headerIn = el("input", { type: "checkbox", checked: "" });
   const body = el("div", {}, [
-    field("Rows", rowsIn), field("Columns", colsIn),
-    el("label", { class: "dlg-field dlg-check" }, [headerIn, el("span", {}, ["Header row"])]),
+    field(t("table.rows"), rowsIn), field(t("table.columns"), colsIn),
+    el("label", { class: "dlg-field dlg-check" }, [headerIn, el("span", {}, [t("table.headerRow")])]),
   ]);
-  openDialog("Insert table", body, [
-    { label: "Cancel" },
+  openDialog(t("table.title"), body, [
+    { label: t("dlg.cancel") },
     {
-      label: "Insert", primary: true,
+      label: t("dlg.insert"), primary: true,
       onClick: () => {
         const rows = Math.min(50, Math.max(1, parseInt(rowsIn.value, 10) || 3));
         const cols = Math.min(20, Math.max(1, parseInt(colsIn.value, 10) || 3));
@@ -389,7 +421,7 @@ export function openSymbolDialog(editor) {
     b.addEventListener("click", () => { insertTextAtCaret(editor, s); closeDialog(); });
     grid.appendChild(b);
   }
-  openDialog("Insert symbol", grid, [{ label: "Close" }]);
+  openDialog(t("symbol.title"), grid, [{ label: t("dlg.close") }]);
 }
 
 export function openPageSetupDialog(current, onApply) {
@@ -402,7 +434,7 @@ export function openPageSetupDialog(current, onApply) {
   }
   const orientSel = el("select", {});
   for (const o of ["portrait", "landscape"]) {
-    const opt = el("option", { value: o }, [o[0].toUpperCase() + o.slice(1)]);
+    const opt = el("option", { value: o }, [t(o === "portrait" ? "pageSetup.portrait" : "pageSetup.landscape")]);
     if (cur.orientation === o) opt.selected = true;
     orientSel.appendChild(opt);
   }
@@ -412,17 +444,17 @@ export function openPageSetupDialog(current, onApply) {
     mIn[side] = el("input", { type: "number", step: "0.1", min: "0", max: "3", value: String(m[side]) });
   }
   const body = el("div", {}, [
-    field("Paper size", sizeSel),
-    field("Orientation", orientSel),
+    field(t("pageSetup.paperSize"), sizeSel),
+    field(t("pageSetup.orientation"), orientSel),
     el("div", { class: "dlg-grid2" }, [
-      field("Top margin (in)", mIn.top), field("Bottom (in)", mIn.bottom),
-      field("Left (in)", mIn.left), field("Right (in)", mIn.right),
+      field(t("pageSetup.marginTop"), mIn.top), field(t("pageSetup.marginBottom"), mIn.bottom),
+      field(t("pageSetup.marginLeft"), mIn.left), field(t("pageSetup.marginRight"), mIn.right),
     ]),
   ]);
-  openDialog("Page setup", body, [
-    { label: "Cancel" },
+  openDialog(t("pageSetup.title"), body, [
+    { label: t("dlg.cancel") },
     {
-      label: "Apply", primary: true,
+      label: t("dlg.apply"), primary: true,
       onClick: () => {
         const margins = {};
         for (const side of ["top", "bottom", "left", "right"]) {
@@ -468,7 +500,7 @@ export function insertBlankPage(editor) { insertHtmlAtCaret(editor, BLANKPAGE_HT
 // the sanitizer as span + wa-N class; keeps its text in .docx export).
 export function openWordArtDialog(editor) {
   saveSelection(editor);
-  const initial = (window.getSelection().toString() || "").trim() || "WordArt";
+  const initial = (window.getSelection().toString() || "").trim() || t("wordart.defaultText");
   const textIn = el("input", { type: "text", value: initial });
   const styles = el("div", { class: "wordart-styles" });
   let chosen = 1;
@@ -483,13 +515,13 @@ export function openWordArtDialog(editor) {
     styles.appendChild(b);
   }
   const body = el("div", {}, [
-    field("Text", textIn),
-    el("div", { class: "dlg-field dlg-field-col" }, [el("span", {}, ["Style"]), styles]),
+    field(t("dlg.text"), textIn),
+    el("div", { class: "dlg-field dlg-field-col" }, [el("span", {}, [t("wordart.style")]), styles]),
   ]);
-  openDialog("Insert WordArt", body, [
-    { label: "Cancel" },
+  openDialog(t("wordart.title"), body, [
+    { label: t("dlg.cancel") },
     {
-      label: "Insert", primary: true,
+      label: t("dlg.insert"), primary: true,
       onClick: () => {
         const text = textIn.value.trim();
         if (!text) return false;
@@ -503,18 +535,18 @@ export function openWordArtDialog(editor) {
 // the sanitizer and re-render on reload. Inserted as absolutely-positioned
 // objects that the user can drag anywhere on the page.
 const SHAPES = [
-  { type: "rect",     name: "Rectangle",         style: "width:120px;height:72px;background:#4a90d9;border-radius:2px" },
-  { type: "rounded",  name: "Rounded rectangle", style: "width:120px;height:72px;background:#4a90d9;border-radius:16px" },
-  { type: "ellipse",  name: "Ellipse",           style: "width:96px;height:96px;background:#50b477;border-radius:50%" },
-  { type: "triangle", name: "Triangle",          style: "width:96px;height:84px;background:#e8823a;clip-path:polygon(50% 0,100% 100%,0 100%)" },
-  { type: "star",     name: "Star",              style: "width:96px;height:92px;background:#f0c419;clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)" },
-  { type: "arrow",    name: "Arrow",             style: "width:120px;height:64px;background:#7a55c8;clip-path:polygon(0 30%,60% 30%,60% 8%,100% 50%,60% 92%,60% 70%,0 70%)" },
-  { type: "line",     name: "Line",              style: "width:140px;height:4px;background:#444" },
-  { type: "diamond",  name: "Diamond",           style: "width:92px;height:92px;background:#d9534f;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)" },
-  { type: "pentagon", name: "Pentagon",          style: "width:96px;height:92px;background:#20a4a4;clip-path:polygon(50% 0,100% 38%,82% 100%,18% 100%,0 38%)" },
-  { type: "hexagon",  name: "Hexagon",           style: "width:104px;height:92px;background:#e0567b;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)" },
-  { type: "chevron",  name: "Chevron",           style: "width:120px;height:64px;background:#5b8c2a;clip-path:polygon(0 0,70% 0,100% 50%,70% 100%,0 100%,30% 50%)" },
-  { type: "cross",    name: "Cross",             style: "width:92px;height:92px;background:#8a6d3b;clip-path:polygon(35% 0,65% 0,65% 35%,100% 35%,100% 65%,65% 65%,65% 100%,35% 100%,35% 65%,0 65%,0 35%,35% 35%)" },
+  { type: "rect",     nameKey: "shape.rectangle",        style: "width:120px;height:72px;background:#4a90d9;border-radius:2px" },
+  { type: "rounded",  nameKey: "shape.roundedRectangle", style: "width:120px;height:72px;background:#4a90d9;border-radius:16px" },
+  { type: "ellipse",  nameKey: "shape.ellipse",          style: "width:96px;height:96px;background:#50b477;border-radius:50%" },
+  { type: "triangle", nameKey: "shape.triangle",         style: "width:96px;height:84px;background:#e8823a;clip-path:polygon(50% 0,100% 100%,0 100%)" },
+  { type: "star",     nameKey: "shape.star",             style: "width:96px;height:92px;background:#f0c419;clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)" },
+  { type: "arrow",    nameKey: "shape.arrow",            style: "width:120px;height:64px;background:#7a55c8;clip-path:polygon(0 30%,60% 30%,60% 8%,100% 50%,60% 92%,60% 70%,0 70%)" },
+  { type: "line",     nameKey: "shape.line",             style: "width:140px;height:4px;background:#444" },
+  { type: "diamond",  nameKey: "shape.diamond",          style: "width:92px;height:92px;background:#d9534f;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)" },
+  { type: "pentagon", nameKey: "shape.pentagon",         style: "width:96px;height:92px;background:#20a4a4;clip-path:polygon(50% 0,100% 38%,82% 100%,18% 100%,0 38%)" },
+  { type: "hexagon",  nameKey: "shape.hexagon",          style: "width:104px;height:92px;background:#e0567b;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)" },
+  { type: "chevron",  nameKey: "shape.chevron",          style: "width:120px;height:64px;background:#5b8c2a;clip-path:polygon(0 0,70% 0,100% 50%,70% 100%,0 100%,30% 50%)" },
+  { type: "cross",    nameKey: "shape.cross",            style: "width:92px;height:92px;background:#8a6d3b;clip-path:polygon(35% 0,65% 0,65% 35%,100% 35%,100% 65%,65% 65%,65% 100%,35% 100%,35% 65%,0 65%,0 35%,35% 35%)" },
 ];
 // A shape as a free-floating object (position:absolute inside the editor).
 // `fill` overrides the shape's default background color.
@@ -531,14 +563,14 @@ function makeShapeEl(s, left, top, fill) {
 // color selector so the shape is inserted in the chosen fill color.
 export function openShapeDialog(editor) {
   saveSelection(editor);
-  const colorIn = el("input", { type: "color", value: "#4a90d9", title: "Shape color" });
-  const colorRow = el("div", { class: "shape-color-row" }, [el("span", {}, ["Color"]), colorIn]);
+  const colorIn = el("input", { type: "color", value: "#4a90d9", title: t("shape.colorTitle") });
+  const colorRow = el("div", { class: "shape-color-row" }, [el("span", {}, [t("shape.color")]), colorIn]);
   // live-tint the preview swatches to the chosen color
   const tint = () => grid.querySelectorAll(".shape-preview").forEach((p) => { p.style.background = colorIn.value; });
   colorIn.addEventListener("input", tint);
   const grid = el("div", { class: "shape-grid" });
   for (const s of SHAPES) {
-    const b = el("button", { type: "button", class: "shape-pick", title: s.name });
+    const b = el("button", { type: "button", class: "shape-pick", title: t(s.nameKey) });
     b.innerHTML = `<span class="shape-preview shape-${s.type}"></span>`;
     b.addEventListener("click", () => {
       // stagger inserts so several don't stack exactly
@@ -554,7 +586,7 @@ export function openShapeDialog(editor) {
   }
   tint();
   const body = el("div", {}, [colorRow, grid]);
-  openDialog("Insert shape", body, [{ label: "Close" }]);
+  openDialog(t("shape.title"), body, [{ label: t("dlg.close") }]);
 }
 
 // ---------------------------------------------------------------
@@ -562,10 +594,10 @@ export function openShapeDialog(editor) {
 // ---------------------------------------------------------------
 export function createFindPanel(editor, host) {
   const panel = el("div", { class: "find-panel hidden", id: "find-panel" });
-  const findIn = el("input", { type: "text", placeholder: "Find…" });
-  const replIn = el("input", { type: "text", placeholder: "Replace with…" });
-  const caseCk = el("input", { type: "checkbox", title: "Match case" });
-  const regexCk = el("input", { type: "checkbox", title: "Regular expression" });
+  const findIn = el("input", { type: "text", placeholder: t("find.placeholder") });
+  const replIn = el("input", { type: "text", placeholder: t("find.replacePlaceholder") });
+  const caseCk = el("input", { type: "checkbox", title: t("find.matchCase") });
+  const regexCk = el("input", { type: "checkbox", title: t("find.regex") });
   const count = el("span", { class: "find-count" }, [""]);
   let hits = [];
   let cur = -1;
@@ -605,7 +637,29 @@ export function createFindPanel(editor, host) {
     } catch { return null; }
   }
 
-  function search() {
+  function scrollWithinEditor(target) { scrollElementIntoEditorView(editor, target); }
+  // Updates the visual "current hit" state and count, and — critically —
+  // gives the current hit a REAL Selection/Range (not just a <mark>), saved
+  // via saveSelection() so a later insertHtmlAtCaret/insertTextAtCaret/
+  // insertTracked* call (e.g. an SDK caller doing find() then replacing at
+  // that spot) lands exactly at the match instead of wherever the caret
+  // happened to be before find() ran. `scroll` is opt-in so refining a query
+  // keystroke-by-keystroke doesn't yank the viewport around — only an
+  // explicit next/prev/find() call reveals the match.
+  function updateCurrentHit(scroll) {
+    hits.forEach((h, i) => h.classList.toggle("current", i === cur));
+    count.textContent = hits.length ? `${cur + 1}/${hits.length}` : "0 results";
+    if (cur < 0 || !hits[cur]) return;
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(hits[cur]);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    saveSelection(editor);
+    if (scroll) scrollWithinEditor(hits[cur]);
+  }
+
+  function search({ reveal = false } = {}) {
     clearHighlights();
     const re = buildRegex();
     if (!re) return;
@@ -646,24 +700,17 @@ export function createFindPanel(editor, host) {
       }
     }
     hits = [...editor.querySelectorAll("mark.find-hit")];
-    if (hits.length) { cur = 0; focusHit(); }
-    count.textContent = hits.length ? `${cur + 1}/${hits.length}` : "0 results";
+    cur = hits.length ? 0 : -1;
+    updateCurrentHit(reveal);
   }
 
-  function focusHit() {
-    hits.forEach((h, i) => h.classList.toggle("current", i === cur));
-    if (hits[cur]) {
-      hits[cur].scrollIntoView({ block: "center", behavior: "smooth" });
-      count.textContent = `${cur + 1}/${hits.length}`;
-    }
-  }
   function move(dir) {
-    if (!hits.length) { search(); return; }
+    if (!hits.length) { search({ reveal: true }); return; }
     cur = (cur + dir + hits.length) % hits.length;
-    focusHit();
+    updateCurrentHit(true);
   }
   function replaceCurrent() {
-    if (!hits.length) { search(); if (!hits.length) return; }
+    if (!hits.length) { search({ reveal: true }); if (!hits.length) return; }
     const m = hits[cur];
     m.replaceWith(document.createTextNode(replIn.value));
     fireInput(editor);
@@ -681,15 +728,15 @@ export function createFindPanel(editor, host) {
   findIn.addEventListener("input", () => search());
   panel.append(
     findIn,
-    btn("↑", "Previous", () => move(-1)),
-    btn("↓", "Next", () => move(1)),
-    el("label", { class: "find-opt", title: "Match case" }, [caseCk, "Aa"]),
-    el("label", { class: "find-opt", title: "Regular expression" }, [regexCk, ".*"]),
+    btn("↑", t("find.previous"), () => move(-1)),
+    btn("↓", t("find.next"), () => move(1)),
+    el("label", { class: "find-opt", title: t("find.matchCase") }, [caseCk, "Aa"]),
+    el("label", { class: "find-opt", title: t("find.regex") }, [regexCk, ".*"]),
     count,
     replIn,
-    btn("Replace", "Replace current", replaceCurrent),
-    btn("All", "Replace all", replaceAll),
-    btn("✕", "Close", () => api.close()),
+    btn(t("find.replaceLabel"), t("find.replaceCurrentTitle"), replaceCurrent),
+    btn(t("find.allLabel"), t("find.replaceAllTitle"), replaceAll),
+    btn("✕", t("dlg.close"), () => api.close()),
   );
   host.appendChild(panel);
 
@@ -700,12 +747,12 @@ export function createFindPanel(editor, host) {
         const sel = window.getSelection().toString();
         if (sel && sel.length < 100) findIn.value = sel;
         findIn.focus(); findIn.select();
-        if (findIn.value) search();
+        if (findIn.value) search({ reveal: true });
       } else clearHighlights();
     },
     close() { panel.classList.add("hidden"); clearHighlights(); },
     isOpen() { return !panel.classList.contains("hidden"); },
-    find(q, opts = {}) { findIn.value = q; caseCk.checked = !!opts.matchCase; regexCk.checked = !!opts.regex; panel.classList.remove("hidden"); search(); return hits.length; },
+    find(q, opts = {}) { findIn.value = q; caseCk.checked = !!opts.matchCase; regexCk.checked = !!opts.regex; panel.classList.remove("hidden"); search({ reveal: true }); return hits.length; },
     replaceAll(q, r, opts = {}) { findIn.value = q; replIn.value = r; caseCk.checked = !!opts.matchCase; regexCk.checked = !!opts.regex; search(); const n = hits.length; if (n) replaceAll(); return n; },
     clear: clearHighlights,
   };
@@ -841,24 +888,24 @@ export function attachTableToolbar(editor, wrap) {
   const withCell = (fn) => () => { const c = currentCell(editor); if (c) { fn(c); fireInput(editor); } };
 
   bar.append(
-    el("span", { class: "tt-label" }, ["Table:"]),
-    btn("+Row ↑", "Insert row above", withCell((c) => tableInsertRow(c, false))),
-    btn("+Row ↓", "Insert row below", withCell((c) => tableInsertRow(c, true))),
-    btn("+Col ←", "Insert column left", withCell((c) => tableInsertCol(c, false))),
-    btn("+Col →", "Insert column right", withCell((c) => tableInsertCol(c, true))),
+    el("span", { class: "tt-label" }, [t("table.tt.label")]),
+    btn(t("table.tt.rowAbove"), t("table.tt.rowAboveTitle"), withCell((c) => tableInsertRow(c, false))),
+    btn(t("table.tt.rowBelow"), t("table.tt.rowBelowTitle"), withCell((c) => tableInsertRow(c, true))),
+    btn(t("table.tt.colLeft"), t("table.tt.colLeftTitle"), withCell((c) => tableInsertCol(c, false))),
+    btn(t("table.tt.colRight"), t("table.tt.colRightTitle"), withCell((c) => tableInsertCol(c, true))),
     sep(),
-    btn("Merge →", "Merge with cell to the right", withCell(tableMergeRight)),
-    btn("Merge ↓", "Merge with cell below", withCell(tableMergeDown)),
-    btn("Split", "Unmerge cell", withCell(tableSplitCell)),
+    btn(t("table.tt.mergeRight"), t("table.tt.mergeRightTitle"), withCell(tableMergeRight)),
+    btn(t("table.tt.mergeDown"), t("table.tt.mergeDownTitle"), withCell(tableMergeDown)),
+    btn(t("table.tt.split"), t("table.tt.splitTitle"), withCell(tableSplitCell)),
     sep(),
-    btn("Shade", "Cell background", withCell((c) => {
+    btn(t("table.tt.shade"), t("table.tt.shadeTitle"), withCell((c) => {
       const input = el("input", { type: "color", value: "#f5f5dc" });
       input.addEventListener("input", () => { c.style.backgroundColor = input.value; fireInput(editor); });
       input.click();
     })),
-    btn("Del row", "Delete row", withCell(tableDeleteRow)),
-    btn("Del col", "Delete column", withCell(tableDeleteCol)),
-    btn("Del table", "Delete table", withCell(tableDelete)),
+    btn(t("table.tt.delRow"), t("table.tt.delRowTitle"), withCell(tableDeleteRow)),
+    btn(t("table.tt.delCol"), t("table.tt.delColTitle"), withCell(tableDeleteCol)),
+    btn(t("table.tt.delTable"), t("table.tt.delTableTitle"), withCell(tableDelete)),
   );
   wrap.appendChild(bar);
 
@@ -897,54 +944,54 @@ export function attachContextMenu(editor, actions = {}) {
     const hasSel = sel && !sel.isCollapsed;
     const items = [];
 
-    items.push(item("✂️ Cut", () => exec("cut"), { disabled: !hasSel }));
-    items.push(item("📋 Copy", () => exec("copy"), { disabled: !hasSel }));
-    items.push(item("📥 Paste", async () => {
+    items.push(item(t("ctx.cut"), () => exec("cut"), { disabled: !hasSel }));
+    items.push(item(t("ctx.copy"), () => exec("copy"), { disabled: !hasSel }));
+    items.push(item(t("ctx.paste"), async () => {
       editor.focus();
       restoreSelection(editor);
       try {
         const text = await navigator.clipboard.readText();
         if (text) exec("insertText", text);
       } catch {
-        alert("Your browser blocked script paste — press Ctrl/⌘+V instead.");
+        alert(t("ctx.pasteBlocked"));
       }
     }));
     items.push("-");
-    items.push(item("💬 Add comment", () => actions.addComment && actions.addComment(), { disabled: !actions.addComment }));
+    items.push(item(t("ctx.addComment"), () => actions.addComment && actions.addComment(), { disabled: !actions.addComment }));
 
     const cref = target.closest && target.closest("span.comment-ref");
     if (cref && actions.openComment) {
-      items.push(item("👁 View comment", () => actions.openComment(cref.getAttribute("data-cid"))));
+      items.push(item(t("ctx.viewComment"), () => actions.openComment(cref.getAttribute("data-cid"))));
     }
 
     const tracked = target.closest && target.closest("ins.tc-ins, del.tc-del");
     if (tracked && actions.acceptChange) {
       items.push("-");
-      items.push(item("✓ Accept change", () => actions.acceptChange(tracked)));
-      items.push(item("✗ Reject change", () => actions.rejectChange(tracked)));
+      items.push(item(t("ctx.acceptChange"), () => actions.acceptChange(tracked)));
+      items.push(item(t("ctx.rejectChange"), () => actions.rejectChange(tracked)));
     }
 
     items.push("-");
     const a = target.closest && target.closest("a[href]");
     if (a) {
-      items.push(item("🔗 Open link", () => window.open(a.href, "_blank", "noopener")));
-      items.push(item("⛓ Remove link", () => { unwrapNode(a); fireInput(editor); }));
+      items.push(item(t("ctx.openLink"), () => window.open(a.href, "_blank", "noopener")));
+      items.push(item(t("ctx.removeLink"), () => { unwrapNode(a); fireInput(editor); }));
     } else {
-      items.push(item("🔗 Insert link…", () => openLinkDialog(editor)));
+      items.push(item(t("ctx.insertLink"), () => openLinkDialog(editor)));
     }
 
     const cell = target.closest && target.closest("td,th");
     if (cell && editor.contains(cell)) {
       items.push("-");
-      items.push(item("Insert row below", () => { tableInsertRow(cell, true); fireInput(editor); }));
-      items.push(item("Insert column right", () => { tableInsertCol(cell, true); fireInput(editor); }));
-      items.push(item("Delete row", () => { tableDeleteRow(cell); fireInput(editor); }));
-      items.push(item("Delete column", () => { tableDeleteCol(cell); fireInput(editor); }));
-      items.push(item("Delete table", () => { tableDelete(cell); fireInput(editor); }));
+      items.push(item(t("ctx.insertRowBelow"), () => { tableInsertRow(cell, true); fireInput(editor); }));
+      items.push(item(t("ctx.insertColRight"), () => { tableInsertCol(cell, true); fireInput(editor); }));
+      items.push(item(t("ctx.deleteRow"), () => { tableDeleteRow(cell); fireInput(editor); }));
+      items.push(item(t("ctx.deleteCol"), () => { tableDeleteCol(cell); fireInput(editor); }));
+      items.push(item(t("ctx.deleteTable"), () => { tableDelete(cell); fireInput(editor); }));
     }
 
     items.push("-");
-    items.push(item("Select all", () => { editor.focus(); exec("selectAll"); }));
+    items.push(item(t("ctx.selectAll"), () => { editor.focus(); exec("selectAll"); }));
 
     // build menu
     menu = el("div", { class: "ctx-menu" });
@@ -999,16 +1046,16 @@ export function attachImageEditing(editor, page) {
 
   // ---- toolbar controls ----
   // fill color (shapes only)
-  const fillColor = el("input", { type: "color", value: "#4a90d9", title: "Fill color" });
+  const fillColor = el("input", { type: "color", value: "#4a90d9", title: t("img.fillColor") });
   fillColor.addEventListener("input", () => {
     if (!sel || isImg()) return;
     sel.style.background = fillColor.value;
     changed();
   });
 
-  const borderColor = el("input", { type: "color", value: "#333333", title: "Border color" });
-  const thick = el("select", { title: "Border" });
-  for (const [v, l] of [["0", "No border"], ["1", "1 px"], ["2", "2 px"], ["3", "3 px"], ["4", "4 px"], ["6", "6 px"]]) {
+  const borderColor = el("input", { type: "color", value: "#333333", title: t("img.borderColor") });
+  const thick = el("select", { title: t("img.border") });
+  for (const [v, l] of [["0", t("img.noBorder")], ["1", "1 px"], ["2", "2 px"], ["3", "3 px"], ["4", "4 px"], ["6", "6 px"]]) {
     thick.appendChild(el("option", { value: v }, [l]));
   }
   const applyBorder = () => {
@@ -1021,7 +1068,7 @@ export function attachImageEditing(editor, page) {
   thick.addEventListener("change", applyBorder);
 
   // rounded-corner toggle — reflects the current state (highlighted when rounded)
-  const radiusBtn = btn("⬭", "Rounded corners", () => {
+  const radiusBtn = btn("⬭", t("img.roundedCorners"), () => {
     if (!sel) return;
     const rounded = parseFloat(getComputedStyle(sel).borderTopLeftRadius) > 2;
     sel.style.borderRadius = rounded ? "0" : "12px";
@@ -1043,18 +1090,18 @@ export function attachImageEditing(editor, page) {
     changed();
   }
   const alignBtns = [
-    btn(ALIGN_ICONS.left, "Inline with text", () => setAlign("inline")),
-    btn("⇤", "Float left, wrap text", () => setAlign("left")),
-    btn(ALIGN_ICONS.center, "Center on its own line", () => setAlign("center")),
-    btn("⇥", "Float right, wrap text", () => setAlign("right")),
+    btn(ALIGN_ICONS.left, t("img.inline"), () => setAlign("inline")),
+    btn("⇤", t("img.floatLeft"), () => setAlign("left")),
+    btn(ALIGN_ICONS.center, t("img.centerLine"), () => setAlign("center")),
+    btn("⇥", t("img.floatRight"), () => setAlign("right")),
   ];
 
-  const altBtn = btn("Alt", "Set description (alt text)", () => {
+  const altBtn = btn(t("img.altLabel"), t("img.altTitle"), () => {
     if (!sel) return;
-    const v = prompt("Description (alt text):", sel.getAttribute("alt") || "");
+    const v = prompt(t("img.altPrompt"), sel.getAttribute("alt") || "");
     if (v != null) { sel.setAttribute("alt", v); fireInput(editor); }
   });
-  const replaceBtn = btn("↻ Replace", "Replace image", () => {
+  const replaceBtn = btn(t("img.replaceLabel"), t("img.replaceTitle"), () => {
     if (!isImg()) return;
     const input = el("input", { type: "file", accept: "image/*" });
     input.addEventListener("change", () => {
@@ -1066,7 +1113,7 @@ export function attachImageEditing(editor, page) {
     });
     input.click();
   });
-  const delBtn = btn("🗑", "Delete", () => {
+  const delBtn = btn("🗑", t("img.delete"), () => {
     if (!sel) return;
     const s = sel; deselect(); s.remove(); fireInput(editor);
   });
@@ -1292,7 +1339,7 @@ export function createTrackChanges(editor, getAuthor) {
         r.collapse(true);
         sel.addRange(r);
       }
-      fireInput(editor);
+      fireInput(editor, direction === "backward" ? "deleteContentBackward" : "deleteContentForward");
       return;
     }
     const blocks = intersectedBlocks(range);
@@ -1310,7 +1357,7 @@ export function createTrackChanges(editor, getAuthor) {
       r.collapse(true);
       sel.addRange(r);
     }
-    fireInput(editor);
+    fireInput(editor, direction === "backward" ? "deleteContentBackward" : "deleteContentForward");
   }
 
   function placeCaretInside(node) {
@@ -1331,7 +1378,11 @@ export function createTrackChanges(editor, getAuthor) {
     ins.textContent = text;
     range.insertNode(ins);
     placeCaretInside(ins);
-    fireInput(editor);
+    fireInput(editor, "insertText");
+    // A revision created off-screen (e.g. via the SDK, or at the end of a
+    // long document) used to leave the viewport exactly where it was —
+    // nothing ever scrolled to reveal the change that was just made.
+    scrollElementIntoEditorView(editor, ins);
   }
 
   function insertTrackedHtml(html) {
@@ -1342,9 +1393,24 @@ export function createTrackChanges(editor, getAuthor) {
     tpl.innerHTML = html;
     const hasBlock = tpl.content.querySelector("p,div,h1,h2,h3,h4,h5,h6,ul,ol,table,blockquote,pre");
     if (hasBlock) {
-      // block-level paste isn't wrapped (Word tracks it structurally; we accept the gap)
+      // Block-level content (a multi-paragraph paste, a table, a list, …)
+      // isn't wrapped as a formal ins.tc-ins revision: a single <ins> can't
+      // legally contain a <table>/<li>, and reusing the browser's own
+      // insertHTML (rather than reimplementing its paragraph-splitting logic
+      // by hand) is what keeps that insertion itself correct. Word models
+      // this as a paragraph-mark-level w:ins, which would need its own
+      // OOXML-compatible marking scheme plumbed through accept/reject/list/
+      // docx export — a larger, separate piece of work, not a P1 fix. The
+      // scroll-to-reveal below still applies here, since a caller inserting
+      // block content off-screen has the exact same "can't find what I just
+      // added" problem regardless of whether it ended up tracked.
+      const before = sel.getRangeAt(0).startContainer;
       exec("insertHTML", html);
       fireInput(editor);
+      const after = window.getSelection().anchorNode;
+      const target = (after && (after.nodeType === 1 ? after : after.parentElement))
+        || (before && (before.nodeType === 1 ? before : before.parentElement));
+      scrollElementIntoEditorView(editor, target);
       return;
     }
     const range = window.getSelection().getRangeAt(0);
@@ -1352,7 +1418,8 @@ export function createTrackChanges(editor, getAuthor) {
     ins.appendChild(tpl.content);
     range.insertNode(ins);
     placeCaretInside(ins);
-    fireInput(editor);
+    fireInput(editor, "insertText");
+    scrollElementIntoEditorView(editor, ins);
   }
 
   function strictlyInsideOwnIns(sel, edge) {
@@ -1580,11 +1647,11 @@ export function buildToolbar(editor, hooks = {}) {
   const refocus = () => { editor.focus(); };
 
   // undo/redo
-  const undoBtn = btn(UNDO_ICON, "Undo (Ctrl+Z)", () => {
+  const undoBtn = btn(UNDO_ICON, t("tb.undo"), () => {
     if (hooks.history) hooks.history.undo(); else exec("undo");
     refocus();
   });
-  const redoBtn = btn(REDO_ICON, "Redo (Ctrl+Y / Ctrl+Shift+Z)", () => {
+  const redoBtn = btn(REDO_ICON, t("tb.redo"), () => {
     if (hooks.history) hooks.history.redo(); else exec("redo");
     refocus();
   });
@@ -1601,7 +1668,7 @@ export function buildToolbar(editor, hooks = {}) {
   // Escape or another click cancels.
   let painter = null;
   let painterSticky = false;
-  const painterBtn = btn("🖌", "Format painter — pick up formatting, then select target (double-click to lock)", (b) => {
+  const painterBtn = btn("🖌", t("tb.formatPainter"), (b) => {
     if (painter) { cancelPainter(); return; }
     painter = captureFormat(editor);
     if (painter) b.classList.add("active");
@@ -1625,19 +1692,19 @@ export function buildToolbar(editor, hooks = {}) {
     if (!sel.isCollapsed) applySpanStyle(editor, painter.inline);
     if (!painterSticky) cancelPainter();
   });
-  bar.append(painterBtn, btn("⌫", "Clear formatting", () => { exec("removeFormat"); exec("formatBlock", "<p>"); refocus(); }), sep());
+  bar.append(painterBtn, btn("⌫", t("tb.clearFormatting"), () => { exec("removeFormat"); exec("formatBlock", "<p>"); refocus(); }), sep());
 
   // paragraph style
-  const styleSel = el("select", { title: "Paragraph style" });
-  for (const [v, label] of [["P", "Normal"], ["H1", "Heading 1"], ["H2", "Heading 2"], ["H3", "Heading 3"], ["H4", "Heading 4"], ["H5", "Heading 5"], ["H6", "Heading 6"], ["BLOCKQUOTE", "Quote"], ["PRE", "Code block"]]) {
-    styleSel.appendChild(el("option", { value: v }, [label]));
+  const styleSel = el("select", { title: t("tb.paragraphStyle") });
+  for (const [v, labelKey] of [["P", "style.normal"], ["H1", "style.h1"], ["H2", "style.h2"], ["H3", "style.h3"], ["H4", "style.h4"], ["H5", "style.h5"], ["H6", "style.h6"], ["BLOCKQUOTE", "style.quote"], ["PRE", "style.codeBlock"]]) {
+    styleSel.appendChild(el("option", { value: v }, [t(labelKey)]));
   }
   styleSel.addEventListener("change", () => { exec("formatBlock", "<" + styleSel.value.toLowerCase() + ">"); refocus(); });
   bar.appendChild(styleSel);
 
   // font family / size
-  const fontSel = el("select", { title: "Font family" });
-  fontSel.appendChild(el("option", { value: "" }, ["Font"]));
+  const fontSel = el("select", { title: t("tb.fontFamily") });
+  fontSel.appendChild(el("option", { value: "" }, [t("tb.font")]));
   for (const f of FONTS) {
     const o = el("option", { value: f }, [f]);
     o.style.fontFamily = f;
@@ -1646,8 +1713,8 @@ export function buildToolbar(editor, hooks = {}) {
   fontSel.addEventListener("change", () => { if (fontSel.value) exec("fontName", fontSel.value); refocus(); });
   bar.appendChild(fontSel);
 
-  const sizeSel = el("select", { title: "Font size (pt)" });
-  sizeSel.appendChild(el("option", { value: "" }, ["Size"]));
+  const sizeSel = el("select", { title: t("tb.fontSize") });
+  sizeSel.appendChild(el("option", { value: "" }, [t("tb.size")]));
   for (const s of SIZES) sizeSel.appendChild(el("option", { value: String(s) }, [String(s)]));
   sizeSel.addEventListener("change", () => {
     if (sizeSel.value) applySpanStyle(editor, { fontSize: sizeSel.value + "pt" });
@@ -1658,19 +1725,19 @@ export function buildToolbar(editor, hooks = {}) {
   bar.appendChild(sep());
 
   const fmtBtns = {
-    bold: btn("<b>B</b>", "Bold (Ctrl+B)", () => { exec("bold"); refocus(); }),
-    italic: btn("<i>I</i>", "Italic (Ctrl+I)", () => { exec("italic"); refocus(); }),
-    underline: btn("<u>U</u>", "Underline (Ctrl+U)", () => { exec("underline"); refocus(); }),
-    strikeThrough: btn("<s>S</s>", "Strikethrough", () => { exec("strikeThrough"); refocus(); }),
-    subscript: btn("x₂", "Subscript", () => { exec("subscript"); refocus(); }),
-    superscript: btn("x²", "Superscript", () => { exec("superscript"); refocus(); }),
+    bold: btn("<b>B</b>", t("tb.bold"), () => { exec("bold"); refocus(); }),
+    italic: btn("<i>I</i>", t("tb.italic"), () => { exec("italic"); refocus(); }),
+    underline: btn("<u>U</u>", t("tb.underline"), () => { exec("underline"); refocus(); }),
+    strikeThrough: btn("<s>S</s>", t("tb.strikethrough"), () => { exec("strikeThrough"); refocus(); }),
+    subscript: btn("x₂", t("tb.subscript"), () => { exec("subscript"); refocus(); }),
+    superscript: btn("x²", t("tb.superscript"), () => { exec("superscript"); refocus(); }),
   };
   bar.append(...Object.values(fmtBtns), sep());
 
   // colors
   let activeFg = "#c0392b";
-  const colorInput = el("input", { type: "color", value: activeFg, title: "Text color" });
-  const colorBtn = btn('<span style="border-bottom:3px solid #c0392b">A</span>', "Text color", () => colorInput.click());
+  const colorInput = el("input", { type: "color", value: activeFg, title: t("tb.textColor") });
+  const colorBtn = btn('<span style="border-bottom:3px solid #c0392b">A</span>', t("tb.textColor"), () => colorInput.click());
   function applyFg(color) {
     restoreSelection(editor);
     exec("foreColor", color);
@@ -1700,7 +1767,7 @@ export function buildToolbar(editor, hooks = {}) {
   editor.addEventListener("keyup", sampleColor);
 
   const hlWrap = el("span", { class: "dropdown" });
-  const hlBtn = btn('<span style="background:#ffff00;padding:0 4px">ab</span>', "Highlight", () => hlMenu.classList.toggle("hidden"));
+  const hlBtn = btn('<span style="background:#ffff00;padding:0 4px">ab</span>', t("tb.highlight"), () => hlMenu.classList.toggle("hidden"));
   const hlMenu = el("div", { class: "dropdown-menu hidden" });
   for (const c of HIGHLIGHTS) {
     const sw = el("button", { type: "button", class: "swatch", title: c });
@@ -1720,23 +1787,23 @@ export function buildToolbar(editor, hooks = {}) {
 
   // alignment
   const alignBtns = {
-    justifyLeft: btn(ALIGN_ICONS.left, "Align left", () => { exec("justifyLeft"); refocus(); }),
-    justifyCenter: btn(ALIGN_ICONS.center, "Align center", () => { exec("justifyCenter"); refocus(); }),
-    justifyRight: btn(ALIGN_ICONS.right, "Align right", () => { exec("justifyRight"); refocus(); }),
-    justifyFull: btn(ALIGN_ICONS.justify, "Justify", () => { exec("justifyFull"); refocus(); }),
+    justifyLeft: btn(ALIGN_ICONS.left, t("tb.alignLeft"), () => { exec("justifyLeft"); refocus(); }),
+    justifyCenter: btn(ALIGN_ICONS.center, t("tb.alignCenter"), () => { exec("justifyCenter"); refocus(); }),
+    justifyRight: btn(ALIGN_ICONS.right, t("tb.alignRight"), () => { exec("justifyRight"); refocus(); }),
+    justifyFull: btn(ALIGN_ICONS.justify, t("tb.justify"), () => { exec("justifyFull"); refocus(); }),
   };
   bar.append(...Object.values(alignBtns), sep());
 
   // lists + indent
   bar.append(
-    btn("• ⎯", "Bullet list", () => { exec("insertUnorderedList"); refocus(); }),
-    btn("1. ⎯", "Numbered list", () => { exec("insertOrderedList"); refocus(); }),
-    btn("⇥", "Increase indent", () => { exec("indent"); refocus(); }),
-    btn("⇤", "Decrease indent", () => { exec("outdent"); refocus(); }),
+    btn("• ⎯", t("tb.bulletList"), () => { exec("insertUnorderedList"); refocus(); }),
+    btn("1. ⎯", t("tb.numberedList"), () => { exec("insertOrderedList"); refocus(); }),
+    btn("⇥", t("tb.increaseIndent"), () => { exec("indent"); refocus(); }),
+    btn("⇤", t("tb.decreaseIndent"), () => { exec("outdent"); refocus(); }),
   );
 
   // line spacing
-  const lsSel = el("select", { title: "Line spacing" });
+  const lsSel = el("select", { title: t("tb.lineSpacing") });
   lsSel.appendChild(el("option", { value: "" }, ["↕"]));
   for (const v of ["1", "1.15", "1.5", "2", "2.5"]) lsSel.appendChild(el("option", { value: v }, [v]));
   lsSel.addEventListener("change", () => {
@@ -1749,8 +1816,8 @@ export function buildToolbar(editor, hooks = {}) {
   bar.append(lsSel, sep());
 
   // review
-  const commentBtn = btn("💬", "Add comment on selection", () => hooks.addComment && hooks.addComment());
-  const trackBtn = btn("📝", "Track changes on/off", (b) => {
+  const commentBtn = btn("💬", t("tb.addComment"), () => hooks.addComment && hooks.addComment());
+  const trackBtn = btn("📝", t("tb.trackChanges"), (b) => {
     if (!hooks.toggleTrack) return;
     const on = hooks.toggleTrack();
     b.classList.toggle("active", on);
@@ -1760,9 +1827,9 @@ export function buildToolbar(editor, hooks = {}) {
 
   // find / page setup / print
   bar.append(
-    btn("🔍", "Find & replace (Ctrl+F)", () => hooks.toggleFind && hooks.toggleFind()),
-    btn("📄", "Page setup", () => hooks.pageSetup && hooks.pageSetup()),
-    btn("🖨", "Print / PDF (Ctrl+P)", () => hooks.print && hooks.print()),
+    btn("🔍", t("tb.findReplace"), () => hooks.toggleFind && hooks.toggleFind()),
+    btn("📄", t("tb.pageSetup"), () => hooks.pageSetup && hooks.pageSetup()),
+    btn("🖨", t("tb.print"), () => hooks.print && hooks.print()),
   );
 
   // active-state reflection
@@ -1890,6 +1957,13 @@ export function attachEditorBehaviors(editor, opts = {}) {
   });
 }
 
+// CJK scripts (Chinese/Japanese Kanji, Hiragana, Katakana, Hangul) don't use
+// spaces between words, so the space-delimited word regex below would count
+// an entire unbroken run of Chinese text as a single "word". Word/WPS count
+// each CJK character as its own word; only non-CJK runs get grouped into
+// space/punctuation-delimited words.
+const CJK_CHAR = /[㐀-䶿一-鿿豈-﫿぀-ヿ가-힣]/gu;
+
 export function countWords(editor) {
   let src = editor;
   if (editor.querySelector("del.tc-del")) {
@@ -1897,7 +1971,10 @@ export function countWords(editor) {
     for (const d of src.querySelectorAll("del.tc-del")) d.remove();
   }
   const text = src.innerText || src.textContent || "";
-  const words = (text.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) || []).length;
+  const cjkCount = (text.match(CJK_CHAR) || []).length;
+  const nonCjkText = text.replace(CJK_CHAR, " ");
+  const nonCjkWords = (nonCjkText.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) || []).length;
+  const words = cjkCount + nonCjkWords;
   const chars = text.replace(/\s/g, "").length;
   return { words, chars };
 }

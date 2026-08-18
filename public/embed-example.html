@@ -13,18 +13,22 @@
   </style>
 </head>
 <body>
-  <h1>DocEditor SDK — embed example</h1>
+  <h1 data-i18n="embedExample.title">DocEditor SDK — embed example</h1>
   <div id="controls">
-    <button onclick="demo.insert()">Insert text</button>
-    <button onclick="demo.getContent()">Get content</button>
-    <button onclick="demo.setTitle()">Set title</button>
-    <button onclick="demo.save()">Save</button>
-    <button onclick="demo.viewMode()">View mode</button>
-    <button onclick="demo.editMode()">Edit mode</button>
+    <button onclick="demo.insert()" data-i18n="embedExample.insertText">Insert text</button>
+    <button onclick="demo.getContent()" data-i18n="embedExample.getContent">Get content</button>
+    <button onclick="demo.setTitle()" data-i18n="embedExample.setTitle">Set title</button>
+    <button onclick="demo.save()" data-i18n="embedExample.save">Save</button>
+    <button onclick="demo.viewMode()" data-i18n="embedExample.viewMode">View mode</button>
+    <button onclick="demo.editMode()" data-i18n="embedExample.editMode">Edit mode</button>
   </div>
   <div id="holder"></div>
   <div id="log"></div>
 
+  <script type="module">
+    import { applyI18n } from "/js/i18n.js";
+    applyI18n();
+  </script>
   <script src="/js/sdk.js"></script>
   <script>
     const logEl = document.getElementById("log");

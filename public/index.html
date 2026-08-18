@@ -106,28 +106,29 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
 <div class="header">
   <div class="logo">DocEditor</div>
   <div class="nav">
-    <a href="/editor.html">Editor</a>
-    <a href="/embed-demo.html">Embed demo</a>
-    <a href="/api-docs.html">API docs</a>
+    <a href="/editor.html" data-i18n="home.nav.editor">Editor</a>
+    <a href="/embed-demo.html" data-i18n="home.nav.embedDemo">Embed demo</a>
+    <a href="/api-docs.html" data-i18n="home.nav.apiDocs">API docs</a>
     <a href="https://github.com/fjsimonwang/word-editor" target="_blank">GitHub</a>
-    <a href="/editor.html" class="btn-open">Open editor →</a>
+    <a href="/editor.html" class="btn-open" data-i18n="home.nav.openEditor">Open editor →</a>
+    <button id="btn-lang" data-i18n="lang.switchTo" style="font:13px inherit;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer">中文</button>
   </div>
 </div>
 
 <div class="page">
 
   <div class="hero">
-    <h1>Word and pdf Compatible Editor</h1>
-    <p>
+    <h1 data-i18n="home.hero.title">Word and pdf Compatible Editor</h1>
+    <p data-i18n="home.hero.body">
       A full-featured rich-text editor that runs entirely in the browser — .docx
       import/export, real-time collaboration, track changes, comments, page layout,
       version history, and an embed SDK with REST API. Zero server dependencies.
     </p>
     <div class="actions">
-      <a class="primary" href="#demo">Try the demo ↓</a>
-      <a class="secondary" href="/editor.html">Open standalone editor</a>
-      <a class="secondary" href="/js/sdk.js">Download SDK</a>
-      <a class="secondary" href="https://github.com/fjsimonwang/word-editor" target="_blank">★ Star on GitHub</a>
+      <a class="primary" href="#demo" data-i18n="home.hero.tryDemo">Try the demo ↓</a>
+      <a class="secondary" href="/editor.html" data-i18n="home.hero.openStandalone">Open standalone editor</a>
+      <a class="secondary" href="/js/sdk.js" data-i18n="home.hero.downloadSdk">Download SDK</a>
+      <a class="secondary" href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.hero.starGithub">★ Star on GitHub</a>
     </div>
   </div>
 
@@ -137,80 +138,80 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
         <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
         <span class="label">DocEditor — /</span>
         <span style="flex:1"></span>
-        <span id="frame-status" style="font-size:11px;color:var(--muted)">connecting…</span>
+        <span id="frame-status" style="font-size:11px;color:var(--muted)" data-i18n="home.demo.connecting">connecting…</span>
       </div>
       <div class="body" id="frame-body"></div>
     </div>
 
     <div class="demo-tabs">
-      <a class="active" onclick="return switchTab(this,'live')">Live editor</a>
-      <a onclick="return switchTab(this,'api')">API actions</a>
+      <a class="active" onclick="return switchTab(this,'live')" data-i18n="home.demo.liveEditor">Live editor</a>
+      <a onclick="return switchTab(this,'api')" data-i18n="home.demo.apiActions">API actions</a>
     </div>
 
     <div class="api-panel" id="api-panel" style="display:none">
-      <div class="section-label">Drive the editor from here</div>
+      <div class="section-label" data-i18n="home.demo.driveFromHere">Drive the editor from here</div>
       <div class="row">
-        <button onclick="ed.insertHtml('<p>Inserted at <b>'+new Date().toLocaleTimeString()+'</b></p>')">Insert paragraph</button>
+        <button onclick="ed.insertHtml('<p>Inserted at <b>'+new Date().toLocaleTimeString()+'</b></p>')" data-i18n="home.demo.insertParagraph">Insert paragraph</button>
         <button onclick="ed.bold()"><b>B</b></button>
         <button onclick="ed.italic()"><i>I</i></button>
         <button onclick="ed.underline()"><u>U</u></button>
-        <button onclick="ed.justifyCenter()">Center</button>
-        <button onclick="ed.insertOrderedList()">Numbered list</button>
-        <button onclick="ed.insertUnorderedList()">Bullet list</button>
-        <button onclick="ed.insertLink('https://opencode.ai', 'opencode.ai')">Insert link</button>
-        <button onclick="ed.insertTable(3,4)">3×4 table</button>
-        <button onclick="ed.insertPageBreak()">Page break</button>
-        <button onclick="ed.insertHr()">Horizontal line</button>
-        <button onclick="ed.setHeader('Draft','center')">Header</button>
-        <button onclick="ed.setPageNumbers({format:'page',place:'footer-center'})">Page numbers</button>
-        <button onclick="ed.setZoom(1.25)">Zoom 125%</button>
-        <button onclick="getContent()">Get content</button>
-        <button onclick="getMeta()">Get meta</button>
-        <button onclick="ed.exportDoc('docx')" class="primary">Export .docx</button>
-        <button onclick="ed.exportDoc('pdf')" class="primary">Export PDF</button>
+        <button onclick="ed.justifyCenter()" data-i18n="home.demo.center">Center</button>
+        <button onclick="ed.insertOrderedList()" data-i18n="home.demo.numberedList">Numbered list</button>
+        <button onclick="ed.insertUnorderedList()" data-i18n="home.demo.bulletList">Bullet list</button>
+        <button onclick="ed.insertLink('https://opencode.ai', 'opencode.ai')" data-i18n="home.demo.insertLink">Insert link</button>
+        <button onclick="ed.insertTable(3,4)" data-i18n="home.demo.table3x4">3×4 table</button>
+        <button onclick="ed.insertPageBreak()" data-i18n="home.demo.pageBreak">Page break</button>
+        <button onclick="ed.insertHr()" data-i18n="home.demo.hr">Horizontal line</button>
+        <button onclick="ed.setHeader('Draft','center')" data-i18n="home.demo.header">Header</button>
+        <button onclick="ed.setPageNumbers({format:'page',place:'footer-center'})" data-i18n="home.demo.pageNumbers">Page numbers</button>
+        <button onclick="ed.setZoom(1.25)" data-i18n="home.demo.zoom125">Zoom 125%</button>
+        <button onclick="getContent()" data-i18n="home.demo.getContent">Get content</button>
+        <button onclick="getMeta()" data-i18n="home.demo.getMeta">Get meta</button>
+        <button onclick="ed.exportDoc('docx')" class="primary" data-i18n="home.demo.exportDocx">Export .docx</button>
+        <button onclick="ed.exportDoc('pdf')" class="primary" data-i18n="home.demo.exportPdf">Export PDF</button>
       </div>
-      <div class="result" id="api-result">Click any button → the SDK sends a postMessage command to the embedded editor.</div>
+      <div class="result" id="api-result" data-i18n="home.demo.resultHint">Click any button → the SDK sends a postMessage command to the embedded editor.</div>
     </div>
   </div>
 
   <div class="features">
-    <div class="card"><h3>📄 .docx import/export</h3><p>Open and save native Word documents without any server-side conversion. Round-trips formatting, comments, and page setup.</p></div>
-    <div class="card"><h3>👥 Real-time collaboration</h3><p>WebSocket-based presence and document sync. Multiple users can edit the same document simultaneously.</p></div>
-    <div class="card"><h3>📝 Track changes</h3><p>Full revision tracking — insertions and deletions are recorded. Accept or reject individual changes.</p></div>
-    <div class="card"><h3>💬 Comments</h3><p>Anchor comments to specific text selections. Reply threads, resolve, and delete. Persisted across sessions.</p></div>
-    <div class="card"><h3>📐 Page layout</h3><p>Margins, page size (Letter / A4 / Legal / A3), orientation, headers, footers, and page numbers.</p></div>
-    <div class="card"><h3>📚 Version history</h3><p>Automatic snapshots on every save. Browse and restore any previous version with one click.</p></div>
-    <div class="card"><h3>🔍 Find &amp; replace</h3><p>Search document text with optional regex and case matching. Replace individual or all occurrences.</p></div>
-    <div class="card"><h3>🎨 Rich formatting</h3><p>Bold, italic, underline, strikethrough, subscript, superscript, font family, size, color, highlight, alignment, indent.</p></div>
-    <div class="card"><h3>🖼 Images, tables, shapes</h3><p>Insert inline images, WordArt, shapes, tables, hyperlinks, symbols, page breaks, horizontal rules.</p></div>
-    <div class="card"><h3>🔌 Embed SDK</h3><p>Mount the editor in any page with <code>&lt;script src="sdk.js"&gt;</code>. Full postMessage API — 50+ commands.</p></div>
-    <div class="card"><h3>🌐 REST API</h3><p>All document operations available as HTTP endpoints. Use the <code>DocEditorRestClient</code> from any language.</p></div>
-    <div class="card"><h3>📄 PDF viewer, editor &amp; sign</h3><p>Open any <code>.pdf</code> — zoom (Ctrl+scroll), fit-width/screen, page nav, add comments, upload wet stamps, and apply real <b>ECDSA-P-256 digital signatures</b>. Click the ✏️ tool to <b>edit text directly in place</b> — changes are baked into the page when you save. Save everything as a new PDF (via pdf-lib) — signatures ship as a <code>signature.json</code> file attachment embedded inside the PDF itself for offline verification.</p></div>
-    <div class="card"><h3>⚡ Single binary</h3><p>Zero-dependency Node.js server. No npm install, no database — just <code>node server.js</code> and it runs.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.docx.h">📄 .docx import/export</h3><p data-i18n="home.feat.docx.p">Open and save native Word documents without any server-side conversion. Round-trips formatting, comments, and page setup.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.collab.h">👥 Real-time collaboration</h3><p data-i18n="home.feat.collab.p">WebSocket-based presence and document sync. Multiple users can edit the same document simultaneously.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.track.h">📝 Track changes</h3><p data-i18n="home.feat.track.p">Full revision tracking — insertions and deletions are recorded. Accept or reject individual changes.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.comments.h">💬 Comments</h3><p data-i18n="home.feat.comments.p">Anchor comments to specific text selections. Reply threads, resolve, and delete. Persisted across sessions.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.layout.h">📐 Page layout</h3><p data-i18n="home.feat.layout.p">Margins, page size (Letter / A4 / Legal / A3), orientation, headers, footers, and page numbers.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.history.h">📚 Version history</h3><p data-i18n="home.feat.history.p">Automatic snapshots on every save. Browse and restore any previous version with one click.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.find.h">🔍 Find &amp; replace</h3><p data-i18n="home.feat.find.p">Search document text with optional regex and case matching. Replace individual or all occurrences.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.fmt.h">🎨 Rich formatting</h3><p data-i18n="home.feat.fmt.p">Bold, italic, underline, strikethrough, subscript, superscript, font family, size, color, highlight, alignment, indent.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.media.h">🖼 Images, tables, shapes</h3><p data-i18n="home.feat.media.p">Insert inline images, WordArt, shapes, tables, hyperlinks, symbols, page breaks, horizontal rules.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.sdk.h">🔌 Embed SDK</h3><p data-i18n-html="home.feat.sdk.p">Mount the editor in any page with <code>&lt;script src="sdk.js"&gt;</code>. Full postMessage API — 50+ commands.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.rest.h">🌐 REST API</h3><p data-i18n-html="home.feat.rest.p">All document operations available as HTTP endpoints. Use the <code>DocEditorRestClient</code> from any language.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.pdf.h">📄 PDF viewer, editor &amp; sign</h3><p data-i18n-html="home.feat.pdf.p">Open any <code>.pdf</code> — zoom (Ctrl+scroll), fit-width/screen, page nav, add comments, upload wet stamps, and apply real <b>ECDSA-P-256 digital signatures</b>. Click the ✏️ tool to <b>edit text directly in place</b> — changes are baked into the page when you save. Save everything as a new PDF (via pdf-lib) — signatures ship as a <code>signature.json</code> file attachment embedded inside the PDF itself for offline verification.</p></div>
+    <div class="card"><h3 data-i18n="home.feat.binary.h">⚡ Single binary</h3><p data-i18n-html="home.feat.binary.p">Zero-dependency Node.js server. No npm install, no database — just <code>node server.js</code> and it runs.</p></div>
   </div>
 
   <div class="links-row">
     <div class="col">
-      <h4>API reference</h4>
-      <a href="/api-docs.html">Swagger — REST API</a>
-      <a href="/api-docs.html#sdk">SDK commands</a>
-      <a href="/js/sdk.js">sdk.js (download)</a>
+      <h4 data-i18n="home.links.apiRef">API reference</h4>
+      <a href="/api-docs.html" data-i18n="home.links.swagger">Swagger — REST API</a>
+      <a href="/api-docs.html#sdk" data-i18n="home.links.sdkCommands">SDK commands</a>
+      <a href="/js/sdk.js" data-i18n="home.links.sdkDownload">sdk.js (download)</a>
       <a href="/js/api-client.js">api-client.js</a>
     </div>
     <div class="col">
-      <h4>Demos</h4>
-      <a href="/embed-demo.html">Demo with host controls</a>
-      <a href="/editor.html">Standalone editor</a>
+      <h4 data-i18n="home.links.demos">Demos</h4>
+      <a href="/embed-demo.html" data-i18n="home.links.demoHost">Demo with host controls</a>
+      <a href="/editor.html" data-i18n="home.links.standalone">Standalone editor</a>
     </div>
     <div class="col">
-      <h4>Deployment</h4>
-      <a href="https://github.com/fjsimonwang/word-editor" target="_blank">GitHub repository</a>
-      <span class="plain">Docker: <code>docker compose up -d</code></span>
+      <h4 data-i18n="home.links.deployment">Deployment</h4>
+      <a href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.links.githubRepo">GitHub repository</a>
+      <span class="plain"><span data-i18n="home.links.docker">Docker:</span> <code>docker compose up -d</code></span>
     </div>
     <div class="col">
-      <h4>Server</h4>
-      <a href="/api/health">Health check</a>
-      <span class="plain">Node.js · port 3001</span>
+      <h4 data-i18n="home.links.server">Server</h4>
+      <a href="/api/health" data-i18n="home.links.healthCheck">Health check</a>
+      <span class="plain" data-i18n="home.links.nodePort">Node.js · port 3001</span>
     </div>
   </div>
 
@@ -218,13 +219,13 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
 
 <footer>
   <div class="foot-inner">
-    <div class="foot-left">
+    <div class="foot-left" data-i18n="home.footer.tagline">
       DocEditor — built with vanilla JavaScript, zero dependencies
     </div>
     <div class="foot-right">
       <a href="https://github.com/fjsimonwang/word-editor" target="_blank" class="foot-gh">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-        <span class="foot-gh-text">View on GitHub</span>
+        <span class="foot-gh-text" data-i18n="home.footer.viewGithub">View on GitHub</span>
         <span class="foot-star" id="gh-stars">★</span>
       </a>
       <span class="foot-meta">
@@ -234,6 +235,13 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
   </div>
 </footer>
 
+<script type="module">
+  import { applyI18n, t, getLocale, setLocale } from "/js/i18n.js";
+  applyI18n();
+  const langBtn = document.getElementById("btn-lang");
+  if (langBtn) langBtn.addEventListener("click", () => setLocale(getLocale() === "zh" ? "en" : "zh"));
+  window.__i18nT = t; // used by the classic-script block below
+</script>
 <script src="/js/sdk.js"></script>
 <script>
   var resEl = document.getElementById("api-result");
@@ -242,9 +250,9 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
   var ed = DocEditor.init({
     container: "#frame-body",
     user: "Demo",
-    onReady: function (i) { statusEl.textContent = "ready · doc " + i.id.slice(0,8); },
+    onReady: function (i) { statusEl.textContent = (window.__i18nT ? window.__i18nT("home.demo.readyDoc") : "ready · doc") + " " + i.id.slice(0,8); },
     onChange: function () {},
-    onError: function (e) { statusEl.textContent = "error"; console.error(e); },
+    onError: function (e) { statusEl.textContent = window.__i18nT ? window.__i18nT("status.error") : "error"; console.error(e); },
   });
 
   function switchTab(el, tab) {
