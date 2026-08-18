@@ -53,17 +53,20 @@
 <body>
 
   <div class="menu-bar">
-    <h1>DocEditor API reference</h1>
+    <h1 data-i18n="apiDocs.title">DocEditor API reference</h1>
     <div class="tabs">
-      <a href="#" class="active" onclick="showTab('rest')">REST API (Swagger)</a>
-      <a href="#" onclick="showTab('sdk')">SDK commands</a>
-      <a href="#" onclick="showTab('restclient')">REST client</a>
+      <a href="#" class="active" data-tab="rest" onclick="showTab('rest')" data-i18n="apiDocs.tab.rest">REST API (Swagger)</a>
+      <a href="#" data-tab="sdk" onclick="showTab('sdk')" data-i18n="apiDocs.tab.sdk">SDK commands</a>
+      <a href="#" data-tab="restclient" onclick="showTab('restclient')" data-i18n="apiDocs.tab.restclient">REST client</a>
     </div>
+  </div>
+  <div id="btn-lang-wrap" style="text-align:right;padding:6px 32px;background:#1e2430">
+    <button id="btn-lang" data-i18n="lang.switchTo" style="font:12px inherit;color:#8ab4ff;background:none;border:1px solid #3a4560;border-radius:6px;padding:3px 10px;cursor:pointer">中文</button>
   </div>
 
 <div id="sdk-panel" style="display:none">
   <div class="sdk-hero">
-    <h2>Embed DocEditor via iframe + JS SDK</h2>
+    <h2 data-i18n="apiDocs.h2.embedIntro">Embed DocEditor via iframe + JS SDK</h2>
     <p>
       The <code>DocEditor</code> SDK creates an iframe hosting the editor in another
       origin (or same-origin) and exposes every editor action over
@@ -98,10 +101,10 @@ ed.destroy();
 
   <div class="api-grid">
     <div class="sdk-panel">
-      <h2>Content / meta</h2>
+      <h2 data-i18n="apiDocs.h2.contentMeta">Content / meta</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>Args</th><th>Returns</th><th>postMessage cmd</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.returns">Returns</span></th><th><span data-i18n="apiDocs.th.postMessageCmd">postMessage cmd</span></th></tr></thead>
           <tbody>
             <tr><td>getContent</td><td>—</td><td><code>{html}</code></td><td>getContent</td></tr>
             <tr><td>getText</td><td>—</td><td><code>{text}</code></td><td>getText</td></tr>
@@ -122,10 +125,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Formatting (execCommand)</h2>
+      <h2 data-i18n="apiDocs.h2.formattingExec">Formatting (execCommand)</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>postMessage call</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.postMessageCall">postMessage call</span></th></tr></thead>
           <tbody>
             <tr><td>bold</td><td>format {cmd:bold}</td></tr>
             <tr><td>italic</td><td>format {cmd:italic}</td></tr>
@@ -153,10 +156,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Insert content</h2>
+      <h2 data-i18n="apiDocs.h2.insertContent">Insert content</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>Args</th><th>Returns</th><th>postMessage cmd</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.returns">Returns</span></th><th><span data-i18n="apiDocs.th.postMessageCmd">postMessage cmd</span></th></tr></thead>
           <tbody>
             <tr><td>insertImage</td><td><code>src, {alt, width, height}</code></td><td><code>{ok:true}</code></td><td>insertImage</td></tr>
             <tr><td>insertLink</td><td><code>href, text</code></td><td><code>{ok:true}</code></td><td>insertLink</td></tr>
@@ -171,10 +174,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Headers / footers / page numbers</h2>
+      <h2 data-i18n="apiDocs.h2.headersFootersPn">Headers / footers / page numbers</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>Args</th><th>Returns</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.returns">Returns</span></th></tr></thead>
           <tbody>
             <tr><td>setHeader</td><td><code>text, align</code></td><td><code>{ok:true}</code></td></tr>
             <tr><td>setFooter</td><td><code>text, align</code></td><td><code>{ok:true}</code></td></tr>
@@ -185,10 +188,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Page setup / zoom</h2>
+      <h2 data-i18n="apiDocs.h2.pageSetupZoom">Page setup / zoom</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>Args</th><th>Returns</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.returns">Returns</span></th></tr></thead>
           <tbody>
             <tr><td>setPageSetup</td><td><code>{size, orientation, margins:{top,bottom,left,right}}</code></td><td><code>{ok, pageSetup}</code></td></tr>
             <tr><td>getPageSetup</td><td>—</td><td><code>{pageSetup}</code></td></tr>
@@ -200,10 +203,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Document management</h2>
+      <h2 data-i18n="apiDocs.h2.docManagement">Document management</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>Args</th><th>Returns</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.returns">Returns</span></th></tr></thead>
           <tbody>
             <tr><td>loadDocument</td><td><code>id</code></td><td><code>{ok}</code></td></tr>
             <tr><td>setMode</td><td><code>"edit" | "view"</code></td><td><code>{ok:true}</code></td></tr>
@@ -218,10 +221,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Find / replace</h2>
+      <h2 data-i18n="apiDocs.h2.findReplace">Find / replace</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>Args</th><th>Returns</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.returns">Returns</span></th></tr></thead>
           <tbody>
             <tr><td>find</td><td><code>query, {matchCase?, regex?}</code></td><td><code>{matches}</code></td></tr>
             <tr><td>replaceAll</td><td><code>query, replacement, {matchCase?, regex?}</code></td><td><code>{replaced}</code></td></tr>
@@ -231,10 +234,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Review / comments</h2>
+      <h2 data-i18n="apiDocs.h2.reviewComments">Review / comments</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>Args</th><th>Returns</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.returns">Returns</span></th></tr></thead>
           <tbody>
             <tr><td>addComment</td><td><code>text, author?</code></td><td><code>{id}</code></td></tr>
             <tr><td>getComments</td><td>—</td><td><code>{comments[]}</code></td></tr>
@@ -248,10 +251,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Export</h2>
+      <h2 data-i18n="apiDocs.h2.export">Export</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>SDK method</th><th>Args</th><th>Description</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.description">Description</span></th></tr></thead>
           <tbody>
             <tr><td>exportDoc</td><td><code>"docx"|"html"|"txt"|"pdf"</code></td><td>Triggers a browser download</td></tr>
             <tr><td>previewPrint</td><td>—</td><td>Opens the browser print dialog</td></tr>
@@ -261,10 +264,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Lifecycle</h2>
+      <h2 data-i18n="apiDocs.h2.lifecycle">Lifecycle</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>Method</th><th>Description</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.method">Method</span></th><th><span data-i18n="apiDocs.th.description">Description</span></th></tr></thead>
           <tbody>
             <tr><td>destroy</td><td>Removes the iframe, tears down the message listener, rejects pending calls.</td></tr>
             <tr><td>iframe</td><td>The underlying &lt;iframe&gt; element (read-only property).</td></tr>
@@ -274,10 +277,10 @@ ed.destroy();
     </div>
 
     <div class="sdk-panel">
-      <h2>Init options</h2>
+      <h2 data-i18n="apiDocs.h2.initOptions">Init options</h2>
       <div class="scroll" style="padding:8px 14px; font-size:13px; line-height:1.7;">
         <table class="cmds">
-          <thead><tr><th>Option</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.option">Option</span></th><th><span data-i18n="apiDocs.th.type">Type</span></th><th><span data-i18n="apiDocs.th.default">Default</span></th><th><span data-i18n="apiDocs.th.description">Description</span></th></tr></thead>
           <tbody>
             <tr><td>container</td><td>string | Element</td><td><i>required</i></td><td>CSS selector or DOM node to mount the iframe</td></tr>
             <tr><td>baseUrl</td><td>string</td><td>script origin</td><td>Editor server URL</td></tr>
@@ -304,7 +307,7 @@ ed.destroy();
 
 <div id="rest-client-panel" style="display:none">
   <div class="sdk-hero">
-    <h2>DocEditorRestClient — use the full API over HTTP</h2>
+    <h2 data-i18n="apiDocs.h2.restClientIntro">DocEditorRestClient — use the full API over HTTP</h2>
     <p>
       <code>DocEditorRestClient</code> mirrors the embed SDK's method names but talks
       to the server directly via REST API calls.  No iframe, no postMessage — any
@@ -350,10 +353,10 @@ await api.restoreVersion(0);
 
   <div class="api-grid">
     <div class="sdk-panel">
-      <h2>Init &amp; document management</h2>
+      <h2 data-i18n="apiDocs.h2.initDocManagement">Init &amp; document management</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>Method</th><th>Args</th><th>REST endpoint</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.method">Method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.restEndpoint">REST endpoint</span></th></tr></thead>
           <tbody>
             <tr><td>constructor(baseUrl, docId?)</td><td>base URL, optional doc ID</td><td>—</td></tr>
             <tr><td>createDocument(title)</td><td>title string</td><td><code>POST /api/documents</code></td></tr>
@@ -367,10 +370,10 @@ await api.restoreVersion(0);
     </div>
 
     <div class="sdk-panel">
-      <h2>Content</h2>
+      <h2 data-i18n="apiDocs.h2.content">Content</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>Method</th><th>Args</th><th>REST endpoint</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.method">Method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.restEndpoint">REST endpoint</span></th></tr></thead>
           <tbody>
             <tr><td>getContent()</td><td>—</td><td><code>GET /api/documents/{id}/content</code></td></tr>
             <tr><td>setContent(html)</td><td>HTML string</td><td><code>PUT /api/documents/{id}/content</code></td></tr>
@@ -385,10 +388,10 @@ await api.restoreVersion(0);
     </div>
 
     <div class="sdk-panel">
-      <h2>Formatting (HTML transform)</h2>
+      <h2 data-i18n="apiDocs.h2.formattingHtml">Formatting (HTML transform)</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>Method</th><th>Args</th><th>Description</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.method">Method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.description">Description</span></th></tr></thead>
           <tbody>
             <tr><td>formatHtml(cmd, html, value?)</td><td>command, HTML fragment, optional value</td><td>Apply any format command to the fragment</td></tr>
             <tr><td>bold(html)</td><td>HTML fragment</td><td>Wraps in <code>&lt;strong&gt;</code></td></tr>
@@ -412,10 +415,10 @@ await api.restoreVersion(0);
     </div>
 
     <div class="sdk-panel">
-      <h2>Inserts, page setup, comments</h2>
+      <h2 data-i18n="apiDocs.h2.insertsPageSetupComments">Inserts, page setup, comments</h2>
       <div class="scroll">
         <table class="cmds">
-          <thead><tr><th>Method</th><th>REST endpoint</th></tr></thead>
+          <thead><tr><th><span data-i18n="apiDocs.th.method">Method</span></th><th><span data-i18n="apiDocs.th.restEndpoint">REST endpoint</span></th></tr></thead>
           <tbody>
             <tr><td>insertImage(src, opts)</td><td>generates <code>&lt;img&gt;</code> HTML, then calls <code>POST …/insert-html</code></td></tr>
             <tr><td>insertLink(href, text)</td><td>generates <code>&lt;a&gt;</code> HTML, then calls <code>POST …/insert-html</code></td></tr>
@@ -800,9 +803,15 @@ function showTab(name) {
   document.getElementById("sdk-panel").style.display = name === "sdk" ? "block" : "none";
   document.getElementById("rest-panel").style.display  = name === "rest" ? "block" : "none";
   document.getElementById("rest-client-panel").style.display = name === "restclient" ? "block" : "none";
-  document.querySelectorAll(".menu-bar .tabs a").forEach(a => a.classList.toggle("active", a.textContent.toLowerCase().includes(name)));
+  document.querySelectorAll(".menu-bar .tabs a").forEach(a => a.classList.toggle("active", a.getAttribute("data-tab") === name));
 }
 window.showTab = showTab;
+</script>
+<script type="module">
+  import { applyI18n, t, getLocale, setLocale } from "/js/i18n.js";
+  applyI18n();
+  const langBtn = document.getElementById("btn-lang");
+  if (langBtn) langBtn.addEventListener("click", () => setLocale(getLocale() === "zh" ? "en" : "zh"));
 </script>
 </body>
 </html>

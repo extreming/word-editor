@@ -68,10 +68,24 @@ async function deflateRaw(data) {
 }
 
 // ---------------- ZIP read ----------------
+// Legacy binary .doc/.xls/.ppt files (OLE/CFB container format, pre-Office
+// 2007) start with this exact 8-byte signature — distinguishing that from
+// "just not a ZIP" up front means the file-open handler can tell a user
+// "this is a legacy .doc, please convert it" instead of a generic parse
+// error that looks like their file is simply corrupt.
+const OLE_CFB_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+export function isLegacyOleFile(bytes) {
+  if (bytes.length < 8) return false;
+  for (let i = 0; i < 8; i++) if (bytes[i] !== OLE_CFB_SIGNATURE[i]) return false;
+  return true;
+}
 export async function unzip(arrayBuffer) {
   const view = new DataView(arrayBuffer);
   const bytes = new Uint8Array(arrayBuffer);
   const len = arrayBuffer.byteLength;
+  if (isLegacyOleFile(bytes)) {
+    throw new Error("This is a legacy binary Office file (.doc/.xls/.ppt), not a modern .docx — save it as .docx first, then reopen it.");
+  }
   let eocd = -1;
   for (let i = len - 22; i >= 0 && i >= len - 65557; i--) {
     if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
@@ -631,7 +645,105 @@ function renderParagraph(p, ctx) {
   return html;
 }
 
-function parseSectPr(sectPr) {
+// A header/footer part (word/header1.xml, word/footer1.xml, …) has the same
+// paragraph/run structure as document.xml, just rooted at w:hdr/w:ftr instead
+// of w:body. The app's on-screen "chrome" model only understands a single
+// plain-text line + alignment + a yes/no page-number field, so this is a
+// deliberately lossy reduction — rich formatting, multiple paragraphs, tables
+// or images inside a real Word header/footer don't survive the round trip.
+// A PAGE field (either the simple w:fldSimple form or the begin/instrText/
+// separate/end complex form) is detected and reported separately from the
+// text, and its own cached numeric result is skipped, since the app
+// regenerates a live field on export rather than baking in a static number.
+function paragraphTextExcludingFields(p) {
+  let text = "";
+  let hasPageField = false, hasNumPagesField = false, fieldSwitch = null;
+  let inFieldResult = false; // between fldChar separate and end: cached value, skip it
+  const checkInstr = (instr) => {
+    if (/\bPAGE\b/i.test(instr)) {
+      hasPageField = true;
+      if (/\\\*\s*roman/i.test(instr)) fieldSwitch = "roman";
+      else if (/\\\*\s*alphabetic/i.test(instr)) fieldSwitch = "alpha";
+    }
+    if (/\bNUMPAGES\b/i.test(instr)) hasNumPagesField = true;
+  };
+  for (const r of children(p, W, "r")) {
+    const fldChar = child(r, W, "fldChar");
+    if (fldChar) {
+      const type = attr(fldChar, "fldCharType");
+      if (type === "separate") inFieldResult = true;
+      else if (type === "end") inFieldResult = false;
+      continue;
+    }
+    const instrEl = child(r, W, "instrText");
+    if (instrEl) {
+      checkInstr(instrEl.textContent);
+      continue; // field instruction code, never part of the visible label
+    }
+    if (inFieldResult) continue; // cached field result, regenerated live on export instead
+    for (const t of children(r, W, "t")) text += t.textContent;
+    if (child(r, W, "tab")) text += "\t";
+  }
+  for (const fs of children(p, W, "fldSimple")) checkInstr(attr(fs, "instr") || "");
+  return { text, hasPageField, hasNumPagesField, fieldSwitch };
+}
+// A header/footer part built by this app's own export puts the free-text
+// label and the page-number field in separate paragraphs (see
+// headerFooterPartXml) — a paragraph containing a page field is field-only
+// bookkeeping, not part of the label, so it's classified and excluded from
+// `text` rather than concatenated into it. A real Word document that puts
+// both on the same line (its usual three-zone layout) will have its literal
+// "Page "/" of " prose folded into `text` in that case, since there's no
+// separate paragraph to tell them apart — an accepted simplification given
+// the app's chrome model doesn't support a mixed text+field single line.
+function parseHeaderFooterPart(xmlText) {
+  if (!xmlText) return null;
+  let doc;
+  try { doc = parseXml(xmlText); } catch { return null; }
+  const root = doc.documentElement;
+  let text = "", textAlign = "left";
+  let hasPageField = false, pageFormat = "arabic", pageAlign = "left";
+  for (const p of children(root, W, "p")) {
+    const info = paragraphStyleInfo(p, {});
+    const alignStyle = info.styles.find((s) => s.startsWith("text-align:"));
+    const align = alignStyle ? alignStyle.split(":")[1] : "left";
+    const seg = paragraphTextExcludingFields(p);
+    if (seg.hasPageField) {
+      hasPageField = true;
+      pageAlign = align;
+      if (seg.hasNumPagesField) pageFormat = "pageOfN";
+      else if (seg.fieldSwitch) pageFormat = seg.fieldSwitch;
+      else if (seg.text.trim()) pageFormat = "page"; // literal "Page " prefix, bare field otherwise
+      else pageFormat = "arabic";
+      continue;
+    }
+    const t = seg.text.trim();
+    if (t) { text += (text ? " " : "") + t; textAlign = align; }
+  }
+  return { text: text.trim(), align: textAlign, hasPageField, pageFormat, pageAlign };
+}
+function headerFooterRefs(sectPr) {
+  const refs = { header: null, footer: null };
+  for (const ref of children(sectPr, W, "headerReference")) {
+    const type = attr(ref, "type") || "default";
+    const rId = ref.getAttributeNS(R, "id") ?? ref.getAttribute("r:id");
+    if (rId && (type === "default" || !refs.header)) refs.header = rId;
+  }
+  for (const ref of children(sectPr, W, "footerReference")) {
+    const type = attr(ref, "type") || "default";
+    const rId = ref.getAttributeNS(R, "id") ?? ref.getAttribute("r:id");
+    if (rId && (type === "default" || !refs.footer)) refs.footer = rId;
+  }
+  return refs;
+}
+function resolveRelTarget(ctx, rId) {
+  const rel = rId && ctx.rels.get(rId);
+  if (!rel) return null;
+  // targets in document.xml.rels are relative to word/
+  const clean = rel.target.replace(/^\/?word\//, "").replace(/^\.\.?\//, "");
+  return decodePart(ctx.files, "word/" + clean);
+}
+function parseSectPr(sectPr, ctx) {
   const setup = JSON.parse(JSON.stringify(DEFAULT_PAGE_SETUP));
   const pgSz = child(sectPr, W, "pgSz");
   if (pgSz) {
@@ -651,6 +763,28 @@ function parseSectPr(sectPr) {
       const v = parseInt(pgMar.getAttributeNS(W, side) ?? pgMar.getAttribute("w:" + side), 10);
       if (v >= 0) setup.margins[side] = Math.round((v / 1440) * 100) / 100;
     }
+    // distance-from-edge for header/footer text, independent of the content
+    // margin — read here so export can round-trip the real value instead of
+    // the hardcoded 0.5in it used to always write regardless of the source.
+    const hd = parseInt(pgMar.getAttributeNS(W, "header") ?? pgMar.getAttribute("w:header"), 10);
+    const ft = parseInt(pgMar.getAttributeNS(W, "footer") ?? pgMar.getAttribute("w:footer"), 10);
+    if (hd >= 0) setup.headerDistance = Math.round((hd / 1440) * 100) / 100;
+    if (ft >= 0) setup.footerDistance = Math.round((ft / 1440) * 100) / 100;
+  }
+  if (ctx) {
+    const refs = headerFooterRefs(sectPr);
+    const chrome = {};
+    if (refs.header) {
+      const part = parseHeaderFooterPart(resolveRelTarget(ctx, refs.header));
+      if (part && part.text) chrome.header = { text: part.text, align: part.align };
+      if (part && part.hasPageField) chrome.pageNumber = { enabled: true, format: part.pageFormat, place: `header-${part.pageAlign}` };
+    }
+    if (refs.footer) {
+      const part = parseHeaderFooterPart(resolveRelTarget(ctx, refs.footer));
+      if (part && part.text) chrome.footer = { text: part.text, align: part.align };
+      if (part && part.hasPageField) chrome.pageNumber = { enabled: true, format: part.pageFormat, place: `footer-${part.pageAlign}` };
+    }
+    if (Object.keys(chrome).length) setup.chrome = chrome;
   }
   return setup;
 }
@@ -691,7 +825,7 @@ export async function importDocx(fileOrBuffer) {
     } else if (node.localName === "tbl") {
       items.push({ html: tableToHtml(node, ctx) });
     } else if (node.localName === "sectPr") {
-      pageSetup = parseSectPr(node);
+      pageSetup = parseSectPr(node, ctx);
     }
   }
 
@@ -1238,6 +1372,9 @@ function contentTypesXml(ctx) {
   const commentsOverride = ctx.commentIds.size
     ? `<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>`
     : "";
+  const chromeOverrides = (ctx.headerFooterFiles || []).map((f) =>
+    `<Override PartName="/word/${f.name}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${f.name.startsWith("header") ? "header" : "footer"}+xml"/>`
+  ).join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
@@ -1245,7 +1382,7 @@ function contentTypesXml(ctx) {
     `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
     `<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>` +
     `<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>` +
-    commentsOverride +
+    commentsOverride + chromeOverrides +
     `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
     `<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>` +
     `</Types>`;
@@ -1339,7 +1476,63 @@ function coreXml(title) {
 const APP_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Word-Compat Editor</Application></Properties>`;
 
-function sectPrXml(setup) {
+// Live PAGE (and NUMPAGES, for "page X of Y") field(s) as w:fldSimple —
+// simpler to emit than the begin/instrText/separate/end complex-field form,
+// and equally well supported by Word. The "1" is just the cached display
+// value shown before a real Word instance recalculates fields on open; it's
+// never what's actually rendered once opened for real.
+function pageNumberFieldXml(format) {
+  const fieldSwitch = { roman: " \\* roman", alpha: " \\* alphabetic" }[format] || "";
+  const pageField = `<w:fldSimple w:instr="PAGE${fieldSwitch}"><w:r><w:t>1</w:t></w:r></w:fldSimple>`;
+  if (format === "page") return `<w:r><w:t xml:space="preserve">Page </w:t></w:r>${pageField}`;
+  if (format === "pageOfN") {
+    return `<w:r><w:t xml:space="preserve">Page </w:t></w:r>${pageField}` +
+      `<w:r><w:t xml:space="preserve"> of </w:t></w:r><w:fldSimple w:instr="NUMPAGES"><w:r><w:t>1</w:t></w:r></w:fldSimple>`;
+  }
+  return pageField; // arabic (bare number) / roman / alpha
+}
+function jcXml(align) {
+  return align === "center" ? '<w:jc w:val="center"/>' : align === "right" ? '<w:jc w:val="right"/>' : "";
+}
+// Builds a word/header*.xml or word/footer*.xml part. The app's chrome model
+// keeps header/footer text and the page-number field as independent pieces
+// (each with its own alignment) rather than Word's single three-zone
+// left/center/right line, so — deliberate simplification — they're emitted
+// as separate paragraphs rather than one tab-stopped line; both pieces of
+// information survive the round trip, just on their own lines instead of
+// sharing one.
+function headerFooterPartXml(rootTag, textEntry, pageNumberEntry) {
+  const paras = [];
+  if (textEntry && textEntry.text) {
+    paras.push(`<w:p><w:pPr>${jcXml(textEntry.align)}</w:pPr><w:r><w:t xml:space="preserve">${escXml(textEntry.text)}</w:t></w:r></w:p>`);
+  }
+  if (pageNumberEntry) {
+    paras.push(`<w:p><w:pPr>${jcXml(pageNumberEntry.align)}</w:pPr>${pageNumberFieldXml(pageNumberEntry.format)}</w:p>`);
+  }
+  if (!paras.length) paras.push("<w:p/>");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:${rootTag} xmlns:w="${W}">${paras.join("")}</w:${rootTag}>`;
+}
+// Registers a header or footer part + relationship on ctx (mirrors how
+// collectImages registers media rels) and returns the headerReference/
+// footerReference XML fragment to splice into sectPr — or "" if this
+// document has nothing to put in that slot.
+function registerHeaderFooter(ctx, kind, chrome) {
+  if (!ctx || !ctx.rels || !ctx.headerFooterFiles) return "";
+  const pn = chrome.pageNumber && chrome.pageNumber.place && chrome.pageNumber.place.startsWith(kind)
+    ? { format: chrome.pageNumber.format, align: chrome.pageNumber.place.slice(kind.length + 1) }
+    : null;
+  const textEntry = chrome[kind]; // chrome.header | chrome.footer
+  if (!textEntry && !pn) return "";
+  const partName = kind === "header" ? "header1.xml" : "footer1.xml";
+  const rootTag = kind === "header" ? "hdr" : "ftr";
+  const relType = `http://schemas.openxmlformats.org/officeDocument/2006/relationships/${kind}`;
+  const relId = "rId" + ctx.nextRelId++;
+  ctx.rels.push(`<Relationship Id="${relId}" Type="${relType}" Target="${partName}"/>`);
+  ctx.headerFooterFiles.push({ name: partName, xml: headerFooterPartXml(rootTag, textEntry, pn) });
+  const refTag = kind === "header" ? "headerReference" : "footerReference";
+  return `<w:${refTag} w:type="default" r:id="${relId}"/>`;
+}
+function sectPrXml(setup, ctx) {
   const s = setup || DEFAULT_PAGE_SETUP;
   const dim = PAGE_SIZES[s.size] || PAGE_SIZES.Letter;
   let w = dim.w, h = dim.h;
@@ -1347,8 +1540,17 @@ function sectPrXml(setup) {
   if (landscape) [w, h] = [h, w];
   const m = s.margins || DEFAULT_PAGE_SETUP.margins;
   const tw = (v) => Math.round((v != null ? v : 1) * 1440);
-  return `<w:sectPr><w:pgSz w:w="${w}" w:h="${h}"${landscape ? ' w:orient="landscape"' : ""}/>` +
-    `<w:pgMar w:top="${tw(m.top)}" w:right="${tw(m.right)}" w:bottom="${tw(m.bottom)}" w:left="${tw(m.left)}" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>`;
+  // Round-trip the real header/footer distance-from-edge when we imported
+  // one; otherwise Word's own default of 0.5in.
+  const headerDist = tw(s.headerDistance != null ? s.headerDistance : 0.5);
+  const footerDist = tw(s.footerDistance != null ? s.footerDistance : 0.5);
+  const chrome = s.chrome;
+  const refs = chrome
+    ? registerHeaderFooter(ctx, "header", chrome) + registerHeaderFooter(ctx, "footer", chrome)
+    : "";
+  // headerReference/footerReference must precede pgSz per the CT_SectPr schema.
+  return `<w:sectPr>${refs}<w:pgSz w:w="${w}" w:h="${h}"${landscape ? ' w:orient="landscape"' : ""}/>` +
+    `<w:pgMar w:top="${tw(m.top)}" w:right="${tw(m.right)}" w:bottom="${tw(m.bottom)}" w:left="${tw(m.left)}" w:header="${headerDist}" w:footer="${footerDist}" w:gutter="0"/></w:sectPr>`;
 }
 
 export function htmlToDocumentXml(html, ctx, pageSetup) {
@@ -1367,7 +1569,7 @@ function domToDocumentXml(container, ctx, pageSetup) {
   if (!body) body = `<w:p/>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<w:document xmlns:w="${W}" xmlns:r="${R}" xmlns:wp="${WP}" xmlns:a="${A}" xmlns:pic="${PIC}">` +
-    `<w:body>${body}${sectPrXml(pageSetup)}</w:body></w:document>`;
+    `<w:body>${body}${sectPrXml(pageSetup, ctx)}</w:body></w:document>`;
 }
 
 export async function buildDocxFromHtml(html, opts = {}) {
@@ -1379,6 +1581,7 @@ export async function buildDocxFromHtml(html, opts = {}) {
     revId: 1,
     commentMeta: new Map((opts.comments || []).map((c) => [c.id, c])),
     commentIds: new Map(),
+    headerFooterFiles: [],
   };
   ctx.commentId = (cid) => {
     if (!ctx.commentMeta.has(cid)) return null;
@@ -1400,6 +1603,7 @@ export async function buildDocxFromHtml(html, opts = {}) {
     ["docProps/app.xml", enc.encode(APP_XML)],
   ]);
   if (ctx.commentIds.size) files.set("word/comments.xml", enc.encode(commentsXml(ctx)));
+  for (const f of ctx.headerFooterFiles) files.set("word/" + f.name, enc.encode(f.xml));
   for (const m of ctx.media) files.set("word/media/" + m.name, m.bytes);
   return zip(files);
 }

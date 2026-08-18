@@ -2,8 +2,19 @@
 
 const API = "/api/documents";
 
-async function req(url, opts) {
-  const r = await fetch(url, opts);
+// Bearer credential for this session: either the server's global AUTH_TOKEN
+// (server-to-server use) or a short-lived, document-scoped token minted via
+// POST /api/auth/token. Set via ?token= in the editor URL, or — the
+// preferred path for an embedded iframe, since a URL can leak through
+// referrers/history/logs — via the postMessage SDK's setAuthToken command.
+let authToken = null;
+export function setAuthToken(token) { authToken = token || null; }
+export function getAuthToken() { return authToken; }
+
+async function req(url, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+  const r = await fetch(url, { ...opts, headers });
   if (r.status === 409) {
     const body = await r.json();
     const err = new Error("conflict");
@@ -11,7 +22,19 @@ async function req(url, opts) {
     err.current = body.current;
     throw err;
   }
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) {
+    // Surface the server's own error/hint (e.g. ".doc conversion
+    // unavailable", "could not parse .docx: …") instead of a bare status
+    // code — callers like the file-open handler alert() this message
+    // directly, so a generic "HTTP 422" would leave the user no better off
+    // than before the server started explaining what went wrong.
+    let detail = "";
+    try {
+      const body = await r.json();
+      detail = [body.error, body.hint].filter(Boolean).join(" — ");
+    } catch {}
+    throw new Error(detail || `HTTP ${r.status}`);
+  }
   return r.json();
 }
 
@@ -36,7 +59,7 @@ export function saveDocument(id, { title, state, pageSetup, comments, trackChang
   });
 }
 export async function deleteDocument(id) {
-  await fetch(`${API}/${id}`, { method: "DELETE" });
+  await req(`${API}/${id}`, { method: "DELETE" });
 }
 export async function putDocx(id, blob) {
   const b64 = await blobToBase64(blob);
@@ -163,7 +186,8 @@ export class SyncClient {
     this.closedByUs = false;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     try {
-      this.ws = new WebSocket(`${proto}//${location.host}/ws`);
+      const qs = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
+      this.ws = new WebSocket(`${proto}//${location.host}/ws${qs}`);
     } catch { return; }
     this.ws.addEventListener("open", () => {
       this.retry = 0;

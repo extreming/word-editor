@@ -1,0 +1,26 @@
+{
+  "name": "word-editor",
+  "version": "1.0.0",
+  "description": "A browser-based, Word-compatible rich-text editor. The client remains zero-dependency vanilla ES modules with hand-written OOXML (WordprocessingML) mapping. The Node server reuses that same client-side DOCX parser for server-side conversion (via a jsdom DOM shim) and adds a small set of server-only infra dependencies (jsdom, redis) for production multi-instance deployment.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fjsimonwang/word-editor.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/fjsimonwang/word-editor/issues"
+  },
+  "homepage": "https://github.com/fjsimonwang/word-editor#readme",
+  "dependencies": {
+    "jsdom": "^29.1.1",
+    "redis": "^6.2.1"
+  }
+}
