@@ -79,6 +79,10 @@
     if (opts.toolbar === false) q.set("toolbar", "0");
     if (opts.statusbar === false) q.set("statusbar", "0");
     if (opts.user) q.set("user", opts.user);
+    if (opts.documentTitle) q.set("title", opts.documentTitle);
+    if (opts.fileType) q.set("fileType", opts.fileType);
+    if (opts.tenantId != null) q.set("tenantId", String(opts.tenantId));
+    if (opts.history === false) q.set("history", "0");
 
     // authToken (a scoped token from POST /api/auth/token, or the global
     // AUTH_TOKEN) goes in the URL FRAGMENT, not the query string: fragments
@@ -86,7 +90,10 @@
     // this credential doesn't hit server access logs or Referer headers the
     // way a query param would. main.js reads it client-side from
     // location.hash on load — see setAuthToken() there.
-    const hash = opts.authToken ? `#token=${encodeURIComponent(opts.authToken)}` : "";
+    const secrets = new URLSearchParams();
+    if (opts.authToken) secrets.set("token", opts.authToken);
+    if (opts.businessToken) secrets.set("businessToken", opts.businessToken);
+    const hash = secrets.toString() ? `#${secrets.toString()}` : "";
     const iframe = document.createElement("iframe");
     iframe.src = `${baseUrl}/?${q.toString()}${hash}`;
     iframe.style.cssText = "width:100%;height:100%;border:none;display:block;min-height:400px";
@@ -118,7 +125,7 @@
     }
     window.addEventListener("message", onMessage);
 
-    function call(cmd, args) {
+    function call(cmd, args, timeoutMs = 15000) {
       if (destroyed) return Promise.reject(new Error("editor destroyed"));
       return new Promise((resolve, reject) => {
         const id = ++seq;
@@ -129,7 +136,7 @@
             pending.delete(id);
             reject(new Error("DocEditor: timeout for " + cmd));
           }
-        }, 15000);
+        }, timeoutMs);
       });
     }
 
@@ -143,7 +150,8 @@
       insertHtml: (html) => call("insertHtml", { html }),
       getMeta: () => call("getMeta"),
       setTitle: (title) => call("setTitle", { title }),
-      save: () => call("save"),
+      save: () => call("save", undefined, 60000),
+      close: () => call("close", undefined, 60000),
       loadDocument: (id) => call("loadDocument", { id }),
       setMode: (mode) => call("setMode", { mode }),
       find: (query, o) => call("find", { query, ...o }),

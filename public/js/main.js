@@ -16,7 +16,7 @@ import {
 import {
   Autosaver, SyncClient, createDocument, getDocument, listDocuments, deleteDocument,
   importDocxFile, putDocx, saveDocument, listVersions, getVersion, restoreVersion,
-  setAuthToken,
+  setAuthToken, openLegalAiSession, commitLegalAiDocument,
 } from "./store.js";
 import { openPdf, closePdf, isPdfMode, getPdfInfo } from "./pdf-view.js";
 import { t, applyI18n, getLocale, setLocale } from "./i18n.js";
@@ -31,15 +31,17 @@ const params = new URLSearchParams(location.search);
 // headers) or, for quick manual testing, as a plain ?token= query param.
 // Cleared from the visible URL immediately either way so it doesn't linger
 // in browser history for the lifetime of the tab.
+let legalAiBusinessToken = null;
 {
   const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
   const urlToken = hashParams.get("token") || params.get("token");
+  legalAiBusinessToken = hashParams.get("businessToken") || null;
   if (urlToken) {
     setAuthToken(urlToken);
     params.delete("token");
-    const qs = params.toString();
-    history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : ""));
   }
+  const qs = params.toString();
+  history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : ""));
 }
 
 // page dimensions in inches
@@ -95,9 +97,11 @@ async function main() {
   const showToolbar = params.get("toolbar") !== "0";
   const showStatusbar = params.get("statusbar") !== "0";
   const mode = params.get("mode") === "view" ? "view" : "edit";
+  const showHistory = params.get("history") !== "0";
   if (embedded) document.body.classList.add("embed");
   if (!showToolbar) toolbarHost.classList.add("hidden");
   if (!showStatusbar) $("statusbar").classList.add("hidden");
+  if (!showHistory && $("btn-history")) $("btn-history").classList.add("hidden");
 
   if (!supportsDocx()) {
     setStatus("error");
@@ -539,7 +543,7 @@ async function main() {
         rev: doc.rev, title: doc.title, state: doc.state, pageSetup: doc.pageSetup,
         comments: doc.comments, trackChanges: doc.trackChanges,
       });
-      emitToHost("save", { id: doc.id, rev: doc.rev, title: doc.title });
+      emitToHost("autosave", { id: doc.id, rev: doc.rev, title: doc.title });
     },
     (server) => showConflictBanner(server) // onConflict (409)
   );
@@ -577,8 +581,6 @@ async function main() {
       emitToHost("change", { source: "remote" });
     },
   });
-  sync.connect();
-
   function showConflictBanner(server, from) {
     const banner = $("banner");
     banner.classList.remove("hidden");
@@ -616,6 +618,42 @@ async function main() {
       comments: docComments, trackChanges: track.isEnabled(),
     });
   };
+
+  async function formalSave(reason = "manual", keepalive = false) {
+    scheduleSave();
+    await autosaver.flush();
+    if (autosaver.lastError) throw autosaver.lastError;
+    setStatus("saving");
+    const result = await commitLegalAiDocument(current.id, reason, keepalive);
+    setStatus("saved");
+    emitToHost("save", { id: current.id, rev: autosaver.rev, title: titleInput.value, committed: true, reason, result });
+    return result;
+  }
+
+  let legalAiSessionOptions = null;
+  let legalAiTokenRefreshTimer = null;
+
+  async function refreshLegalAiSession() {
+    try {
+      const refreshed = await openLegalAiSession(legalAiSessionOptions);
+      scheduleLegalAiTokenRefresh(refreshed);
+    } catch (error) {
+      emitToHost("error", {
+        message: String(error?.message || error),
+        operation: "session-refresh",
+      });
+      legalAiTokenRefreshTimer = setTimeout(refreshLegalAiSession, 60_000);
+    }
+  }
+
+  function scheduleLegalAiTokenRefresh(session) {
+    clearTimeout(legalAiTokenRefreshTimer);
+    if (!legalAiSessionOptions || !session?.expiresAt) return;
+    // Refresh two minutes before expiry. Reopening an active session validates
+    // the business token but deliberately keeps the current in-memory draft.
+    const delay = Math.max(60_000, session.expiresAt * 1000 - Date.now() - 120_000);
+    legalAiTokenRefreshTimer = setTimeout(refreshLegalAiSession, delay);
+  }
 
   // ---------------------------------------------------------------
   // Comments
@@ -912,6 +950,17 @@ async function main() {
 
   const requestedId = params.get("doc");
   let loaded = false;
+  if (requestedId && legalAiBusinessToken) {
+    legalAiSessionOptions = {
+      docId: requestedId,
+      businessToken: legalAiBusinessToken,
+      title: params.get("title") || requestedId,
+      fileType: params.get("fileType") || "docx",
+      tenantId: params.get("tenantId") || null,
+    };
+    const session = await openLegalAiSession(legalAiSessionOptions);
+    scheduleLegalAiTokenRefresh(session);
+  }
   if (requestedId) loaded = await loadDocument(requestedId);
   if (!loaded) {
     const savedId = localStorage.getItem(LS_KEY);
@@ -1064,12 +1113,17 @@ async function main() {
     if (isPdfMode()) { const info = getPdfInfo(); if (info) { /* delegate to pdf-view's print via its toolbar button */ const btn = document.querySelector("#pdf-toolbar button[title='Print']"); if (btn) btn.click(); return; } }
     window.print();
   });
+  if ($("btn-save")) $("btn-save").addEventListener("click", async () => {
+    closeFileMenu();
+    try { await formalSave("manual"); }
+    catch (e) { setStatus("error"); emitToHost("error", { message: String(e.message || e), operation: "save" }); }
+  });
   if ($("btn-close")) $("btn-close").addEventListener("click", async () => {
     closeFileMenu();
     // PDF: close viewer and return to editor
     if (isPdfMode()) { closePdf(); return; }
     // Document: flush, clear editor, create a fresh blank doc
-    await autosaver.flush();
+    await formalSave("close");
     if (current && current.id) sync.leave(current.id);
     const meta = await createDocument(t("doc.untitled"));
     await loadDocument(meta.id);
@@ -1360,7 +1414,7 @@ async function main() {
     if (k === "s") {
       e.preventDefault();
       if (e.shiftKey) doExport("docx");
-      else { scheduleSave(); autosaver.flush(); }
+      else { void formalSave("manual").catch((error) => { setStatus("error"); emitToHost("error", { message: String(error.message || error), operation: "save" }); }); }
     } else if (k === "f" && !e.shiftKey) {
       e.preventDefault();
       findPanel.toggle();
@@ -1378,7 +1432,15 @@ async function main() {
     }
   });
 
-  window.addEventListener("beforeunload", () => { autosaver.flush(); });
+  // Browser shutdown cannot wait for asynchronous work. Internal autosave is
+  // already debounced continuously; this keepalive commit asks the server to
+  // publish the latest completed draft. Normal LegalAI route changes use the
+  // SDK `close()` command and await both the draft flush and S3 write-back.
+  window.addEventListener("pagehide", () => {
+    clearTimeout(legalAiTokenRefreshTimer);
+    void autosaver.flush();
+    void commitLegalAiDocument(current.id, "close", true).catch(() => {});
+  });
 
   // ---------------------------------------------------------------
   // postMessage API (JS SDK bridge)
@@ -1412,7 +1474,8 @@ async function main() {
           scheduleSave(); reply({ ok: true }); break;
         case "getMeta": reply({ id: current.id, title: titleInput.value, rev: autosaver.rev, pageSetup: current.pageSetup, trackChanges: track.isEnabled(), commentCount: docComments.length, ...countWords(editor) }); break;
         case "setTitle": titleInput.value = String((m.args && m.args.title) || ""); scheduleSave(); reply({ ok: true }); break;
-        case "save": { scheduleSave(); await autosaver.flush(); reply({ ok: true, rev: autosaver.rev }); break; }
+        case "save": { const result = await formalSave("manual"); reply({ ok: true, rev: autosaver.rev, result }); break; }
+        case "close": { const result = await formalSave("close"); reply({ ok: true, rev: autosaver.rev, result }); break; }
         case "loadDocument": reply({ ok: await loadDocument(m.args && m.args.id) }); break;
         case "setMode": {
           const v = m.args && m.args.mode === "view";
@@ -1619,4 +1682,7 @@ async function main() {
 main().catch((e) => {
   console.error(e);
   setStatus("error");
+  if (window.parent !== window) {
+    try { window.parent.postMessage({ we: 1, event: "error", data: { message: String(e.message || e), operation: "initialize" } }, "*"); } catch {}
+  }
 });

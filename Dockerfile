@@ -17,11 +17,6 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-# libreoffice-writer (not the full `libreoffice` metapackage) is enough for
-# .doc/.dot -> .docx conversion and keeps the image meaningfully smaller.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      libreoffice-writer fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev

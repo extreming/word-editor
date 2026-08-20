@@ -126,9 +126,9 @@ docker compose --profile multi-instance up -d --build
   calls require `Authorization: Bearer <token>` or `?token=`), and/or mint
   short-lived, single-document `POST /api/auth/token` credentials for embedding
   a specific tenant/contract — see [server/scopedAuth.js](server/scopedAuth.js)
-- Save webhook: set `SAVE_WEBHOOK_URL` → POST
+- Optional commit notification webhook: set `SAVE_WEBHOOK_URL` → POST
   `{event, id, title, rev, updatedAt, tenantId, contractId, docxFresh, docxBase64|docxUrl}`
-  on every save, with the freshly-regenerated .docx inlined (or a download URL
+  after a formal commit, with the freshly-regenerated .docx inlined (or a download URL
   for large files) — this is word-editor's proposal for a write-back contract,
   not a fixed integration requirement
 - Legacy `.doc`/`.dot` import: converted to .docx via LibreOffice headless
@@ -146,12 +146,47 @@ docker compose --profile multi-instance up -d --build
 | `DATA_DIR` | `./data` | local-disk storage root (ignored when `STORAGE_DRIVER=s3`) |
 | `AUTH_TOKEN` | unset (auth disabled) | global server-to-server bearer credential |
 | `TOKEN_SECRET` | = `AUTH_TOKEN` | HMAC signing key for scoped tokens; set separately to avoid reusing the server-to-server secret as a signing key |
-| `SAVE_WEBHOOK_URL` | unset | POSTed on every save — see above |
+| `SAVE_WEBHOOK_URL` | unset | POSTed after a formal commit — see above |
 | `PUBLIC_BASE_URL` | unset | externally-reachable origin, used to build a `docxUrl` in the webhook when the docx is too large to inline |
 | `STORAGE_DRIVER` | `local` | `local` or `s3` — see [server/storage.js](server/storage.js) |
 | `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_REGION` | — | required when `STORAGE_DRIVER=s3`; any S3-compatible endpoint (MinIO, OSS, real S3) works, path-style |
 | `REDIS_URL` | unset | enables cross-instance WebSocket relay (pub/sub) — see [server.js](server.js)'s `initRedis()` |
 | `SOFFICE_PATH` | `soffice` (PATH lookup) | path to the LibreOffice binary used for legacy `.doc`/`.dot` conversion |
+| `LEGALAI_BASE_URL` | unset | LegalAI backend base URL, for example `https://legalai.example.com/legalai` |
+| `LEGALAI_CONTENT_PATH` | `/zOffice/{docId}/content` | existing FileZ-compatible download/save endpoint used by word-editor |
+| `LEGALAI_TOKEN_HEADER` | `token` | header used when forwarding the LegalAI business token |
+| `LEGALAI_REQUEST_TIMEOUT_MS` | `30000` | timeout for LegalAI download/save calls |
+| `LEGALAI_AUTO_COMMIT_ENABLED` | `false` | periodically publish the latest DOCX to LegalAI; internal draft autosave is unaffected |
+| `LEGALAI_AUTO_COMMIT_INTERVAL_MS` | `300000` | periodic LegalAI publication interval; minimum 60 seconds |
+| `VERSION_HISTORY_ENABLED` | `true` | word-editor internal snapshots; set `false` for the current LegalAI integration |
+
+### LegalAI business-document integration
+
+The LegalAI host initializes the SDK with its stable contract id and current
+business token:
+
+```js
+const editor = DocEditor.init({
+  container: "#editor",
+  baseUrl: "https://legaloffice.example.com",
+  docId: contractId,
+  businessToken: legalAiToken,
+  documentTitle: contractName,
+  fileType: "docx",
+  tenantId,
+  history: false,
+});
+```
+
+The iframe exchanges that business token for a short-lived word-editor token
+only after the word-editor server successfully downloads
+`GET {LEGALAI_BASE_URL}/zOffice/{docId}/content`. Draft autosaves update only
+word-editor's local/shared storage. `Ctrl+S`, the File > Save action, the SDK
+`save()`/`close()` commands, and the best-effort browser `pagehide` hook call
+`POST /api/documents/{docId}/commit`; word-editor then uploads the generated
+DOCX to the same FileZ-compatible LegalAI content endpoint. The business token
+is retained only in memory for the active process and is never written to the
+document metadata or storage objects.
 
 ## Architecture
 

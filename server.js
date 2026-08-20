@@ -32,6 +32,13 @@ const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
 const TOKEN_SECRET = process.env.TOKEN_SECRET || AUTH_TOKEN;
 const WEBHOOK = process.env.SAVE_WEBHOOK_URL || "";
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+const LEGALAI_BASE_URL = (process.env.LEGALAI_BASE_URL || "").replace(/\/$/, "");
+const LEGALAI_CONTENT_PATH = process.env.LEGALAI_CONTENT_PATH || "/zOffice/{docId}/content";
+const LEGALAI_TOKEN_HEADER = process.env.LEGALAI_TOKEN_HEADER || "token";
+const LEGALAI_REQUEST_TIMEOUT_MS = Math.max(Number(process.env.LEGALAI_REQUEST_TIMEOUT_MS) || 30000, 1000);
+const LEGALAI_AUTO_COMMIT_ENABLED = /^(1|true|yes)$/i.test(process.env.LEGALAI_AUTO_COMMIT_ENABLED || "false");
+const LEGALAI_AUTO_COMMIT_INTERVAL_MS = Math.max(Number(process.env.LEGALAI_AUTO_COMMIT_INTERVAL_MS) || 300000, 60000);
+const VERSION_HISTORY_ENABLED = !/^(0|false|no)$/i.test(process.env.VERSION_HISTORY_ENABLED || "true");
 const WEBHOOK_INLINE_MAX = 4 * 1024 * 1024; // inline docx bytes in the webhook up to this size; larger docs are sent as a download URL only
 const MAX_BODY = 64 * 1024 * 1024; // 64 MB
 const MAX_VERSIONS = 30;
@@ -127,8 +134,10 @@ async function readJSON(req) {
   try { return JSON.parse(raw); } catch { throw Object.assign(new Error("invalid JSON body"), { status: 400 }); }
 }
 
-// IDs are UUIDs we generate; reject anything else so ids can never traverse paths.
-const ID_RE = /^[0-9a-fA-F-]{8,64}$/;
+// LegalAI uses its business contract id directly as the editor document id.
+// Keep the accepted alphabet path-safe: no slash, backslash, dot segment or
+// percent-decoded traversal can be represented by this pattern.
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 function validId(id) { return ID_RE.test(id); }
 
 function docKey(id) { return `${id}.json`; }
@@ -146,6 +155,7 @@ async function readVersions(id) {
   try { return JSON.parse(buf.toString("utf8")); } catch { return []; }
 }
 async function snapshotVersion(id, meta, force = false) {
+  if (!VERSION_HISTORY_ENABLED) return;
   if (meta.state == null) return;
   const versions = await readVersions(id);
   const last = versions[versions.length - 1];
@@ -172,6 +182,7 @@ async function writeMeta(id, body, opts = {}) {
     // and preserved for the document's lifetime after that.
     tenantId: body.tenantId !== undefined ? (body.tenantId ? String(body.tenantId).slice(0, 200) : null) : (existing.tenantId || null),
     contractId: body.contractId !== undefined ? (body.contractId ? String(body.contractId).slice(0, 200) : null) : (existing.contractId || null),
+    integration: body.integration !== undefined ? String(body.integration || "").slice(0, 50) : (existing.integration || null),
     createdAt: existing.createdAt,
     updatedAt: Date.now(),
     rev: (existing.rev || 0) + 1,
@@ -187,14 +198,13 @@ async function writeMeta(id, body, opts = {}) {
   const docxFresh = opts.skipDocxRegen
     ? await storage.exists(docxKey(id))
     : (body.state !== undefined ? await regenerateDocx(next) : await storage.exists(docxKey(id)));
-  await fireWebhook(next, docxFresh);
   return next;
 }
 function metaSummary(d) {
   return { id: d.id, title: d.title, updatedAt: d.updatedAt, createdAt: d.createdAt, rev: d.rev || 0 };
 }
 
-// Fired on every save. `docxFresh` tells the receiver whether the .docx this
+// Fired after a formal commit. `docxFresh` tells the receiver whether the .docx this
 // refers to was actually regenerated from the current HTML state (false right
 // after import, or if regeneration failed) — LegalAI should treat a webhook
 // with docxFresh:false as "html state changed, docx not guaranteed current"
@@ -204,11 +214,11 @@ function metaSummary(d) {
 // else a docxUrl) is this project's proposal for the write-back contract —
 // it still needs to be confirmed against whatever LegalAI's receiving webhook
 // actually expects before relying on it in production.
-async function fireWebhook(meta, docxFresh) {
+async function fireWebhook(meta, docxFresh, reason) {
   if (!WEBHOOK) return;
   try {
     const payload = {
-      event: "save", id: meta.id, title: meta.title, rev: meta.rev, updatedAt: meta.updatedAt,
+      event: "commit", reason, id: meta.id, title: meta.title, rev: meta.rev, updatedAt: meta.updatedAt,
       contractId: meta.contractId || null, tenantId: meta.tenantId || null,
       docxFresh: !!docxFresh,
     };
@@ -236,6 +246,124 @@ async function fireWebhook(meta, docxFresh) {
   } catch (e) { console.error("webhook error:", e.message); }
 }
 
+// A LegalAI session is deliberately memory-only: the user's business token
+// is never written into document metadata or object storage. It is refreshed
+// whenever the host opens the editor and is only retained so the optional
+// server-side timer (disabled by default) can commit while that session lives.
+const legalAiSessions = new Map(); // docId -> { businessToken, lastCommittedRev, committing }
+
+function legalAiContentUrl(docId) {
+  if (!LEGALAI_BASE_URL) throw Object.assign(new Error("LEGALAI_BASE_URL is not configured"), { status: 503 });
+  const relative = LEGALAI_CONTENT_PATH.replace("{docId}", encodeURIComponent(docId));
+  return LEGALAI_BASE_URL + (relative.startsWith("/") ? relative : `/${relative}`);
+}
+
+function legalAiHeaders(businessToken, extra = {}) {
+  return { [LEGALAI_TOKEN_HEADER]: businessToken, ...extra };
+}
+
+async function legalAiFetch(url, options) {
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(LEGALAI_REQUEST_TIMEOUT_MS),
+    });
+  } catch (e) {
+    throw Object.assign(new Error(`LegalAI request failed: ${e.message}`), { status: 502 });
+  }
+  return response;
+}
+
+async function downloadLegalAiDocument(docId, businessToken) {
+  const response = await legalAiFetch(legalAiContentUrl(docId), {
+    method: "GET",
+    headers: legalAiHeaders(businessToken, { Accept: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 500);
+    throw Object.assign(new Error(`LegalAI document download failed (${response.status}): ${detail}`), { status: response.status === 401 ? 401 : 502 });
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const detail = (await response.text()).slice(0, 500);
+    let parsed;
+    try { parsed = JSON.parse(detail); } catch {}
+    throw Object.assign(new Error(`LegalAI document download was rejected: ${parsed?.msg || parsed?.error || detail}`), { status: 401 });
+  }
+  const declaredSize = Number(response.headers.get("content-length")) || 0;
+  if (declaredSize > MAX_BODY) throw Object.assign(new Error("LegalAI document exceeds the 64 MB editor limit"), { status: 413 });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length > MAX_BODY) throw Object.assign(new Error("LegalAI document exceeds the 64 MB editor limit"), { status: 413 });
+  return bytes;
+}
+
+async function publishLegalAiDocument(meta, businessToken, reason) {
+  const bytes = await storage.readFile(docxKey(meta.id));
+  if (!bytes) throw Object.assign(new Error("generated DOCX is unavailable"), { status: 500 });
+
+  const boundary = `----word-editor-${crypto.randomBytes(12).toString("hex")}`;
+  const safeName = String(meta.title || meta.id).replace(/["\r\n]/g, "_");
+  const prefix = Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="file"; filename="${safeName}.docx"\r\n` +
+    "Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n"
+  );
+  const suffix = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([prefix, bytes, suffix]);
+  const response = await legalAiFetch(legalAiContentUrl(meta.id), {
+    method: "POST",
+    headers: legalAiHeaders(businessToken, {
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      "Content-Length": String(body.length),
+      "X-Word-Editor-Save-Reason": reason,
+    }),
+    body,
+  });
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw Object.assign(new Error(`LegalAI document save failed (${response.status}): ${responseText.slice(0, 500)}`), { status: 502 });
+  }
+  try {
+    const parsed = responseText ? JSON.parse(responseText) : { ok: true };
+    // LegalAI's BusinessException handler returns HTTP 200 with a non-zero
+    // BaseResponse code, so HTTP status alone cannot prove the S3 write worked.
+    if (parsed && parsed.code != null && String(parsed.code) !== "0") {
+      throw Object.assign(new Error(`LegalAI document save was rejected: ${parsed.msg || parsed.code}`), { status: 502 });
+    }
+    return parsed;
+  } catch (e) {
+    if (e.status) throw e;
+    return { ok: true, response: responseText.slice(0, 500) };
+  }
+}
+
+async function commitLegalAiDocument(id, businessToken, reason = "manual") {
+  const meta = await readMeta(id);
+  if (!meta) throw Object.assign(new Error("document not found"), { status: 404 });
+  if (meta.integration !== "legalai" || meta.contractId !== id) {
+    throw Object.assign(new Error("document is not bound to this LegalAI contract"), { status: 409 });
+  }
+  if (!businessToken) throw Object.assign(new Error("LegalAI business token is required"), { status: 401 });
+
+  const session = legalAiSessions.get(id) || { lastCommittedRev: null, committing: false };
+  if (session.committing) return { ok: true, skipped: "commit-in-progress", rev: meta.rev };
+  if (session.lastCommittedRev === meta.rev) return { ok: true, skipped: "no-changes", rev: meta.rev };
+  session.businessToken = businessToken;
+  session.committing = true;
+  legalAiSessions.set(id, session);
+  try {
+    const docxFresh = await regenerateDocx(meta);
+    if (!docxFresh) throw Object.assign(new Error("could not generate the current DOCX; LegalAI was not updated"), { status: 500 });
+    const legalAi = await publishLegalAiDocument(meta, businessToken, reason);
+    session.lastCommittedRev = meta.rev;
+    await fireWebhook(meta, true, reason);
+    return { ok: true, rev: meta.rev, reason, legalAi };
+  } finally {
+    session.committing = false;
+  }
+}
+
 function credentialFrom(req, url) {
   const h = req.headers["authorization"] || "";
   if (h.startsWith("Bearer ")) return h.slice(7);
@@ -252,22 +380,30 @@ function credentialFrom(req, url) {
 // `scoped` is null for the global token (full access) and the verified
 // payload for a scoped one (access limited to its own document).
 function authenticateRequest(req, url) {
-  if (!AUTH_TOKEN) return { ok: true, scoped: null };
   const cred = credentialFrom(req, url);
-  if (cred && cred === AUTH_TOKEN) return { ok: true, scoped: null };
+  if (AUTH_TOKEN && cred && cred === AUTH_TOKEN) return { ok: true, scoped: null, global: true, anonymous: false };
   if (cred && TOKEN_SECRET) {
     const payload = verifyToken(TOKEN_SECRET, cred);
-    if (payload) return { ok: true, scoped: payload };
+    if (payload) return { ok: true, scoped: payload, global: false, anonymous: false };
   }
-  return { ok: false, scoped: null };
+  // Preserve the upstream editor's unauthenticated standalone/demo mode when
+  // no global AUTH_TOKEN was configured. Integrated LegalAI documents are
+  // still protected below by authorized() and the WebSocket hello check.
+  if (!AUTH_TOKEN) return { ok: true, scoped: null, global: false, anonymous: true };
+  return { ok: false, scoped: null, global: false, anonymous: false };
 }
 // pathDocId: the :id segment of /api/documents/:id/... for the requested
 // route, or null for routes with no specific document (list, create, import,
 // mint-token, format). Scoped tokens are only valid against their own
 // document's routes; every no-doc-id route requires the global token.
-function authorized(req, url, pathDocId) {
-  const { ok, scoped } = authenticateRequest(req, url);
+async function authorized(req, url, pathDocId) {
+  const { ok, scoped, global, anonymous } = authenticateRequest(req, url);
   if (!ok) return false;
+  if (global) return true;
+  if (pathDocId && anonymous) {
+    const doc = await readMeta(pathDocId);
+    if (doc && doc.integration === "legalai") return false;
+  }
   if (!scoped) return true;
   return !!pathDocId && scoped.editorDocumentId === pathDocId;
 }
@@ -359,11 +495,88 @@ async function api(req, res, url) {
 
   if (p === "/api/health") return sendJSON(res, 200, { ok: true, uptime: process.uptime() });
 
+  // LegalAI bootstrap is the only unauthenticated word-editor route. The
+  // supplied business token is immediately validated by using it to download
+  // the requested contract from LegalAI. After that succeeds we exchange it
+  // for a short-lived token scoped to this one editor document.
+  if (p === "/api/integrations/legalai/session" && method === "POST") {
+    if (!TOKEN_SECRET) return sendJSON(res, 503, { error: "TOKEN_SECRET is required for LegalAI integration" });
+    const body = await readJSON(req);
+    const id = String(body.docId || "");
+    const businessToken = String(body.businessToken || "");
+    if (!validId(id)) return sendJSON(res, 400, { error: "bad docId" });
+    if (!businessToken) return sendJSON(res, 401, { error: "businessToken is required" });
+
+    let bytes = await downloadLegalAiDocument(id, businessToken);
+    const activeDocument = rooms.has(id) && rooms.get(id).size > 0 ? await readMeta(id) : null;
+    if (activeDocument && activeDocument.integration === "legalai" && activeDocument.contractId === id) {
+      const currentSession = legalAiSessions.get(id) || { lastCommittedRev: activeDocument.rev, committing: false };
+      currentSession.businessToken = businessToken;
+      legalAiSessions.set(id, currentSession);
+      const minted = mintToken(TOKEN_SECRET, {
+        tenantId: body.tenantId, contractId: id, editorDocumentId: id, ttlSeconds: 60 * 60,
+      });
+      return sendJSON(res, 200, {
+        token: minted.token,
+        expiresAt: minted.payload.exp,
+        document: metaSummary(activeDocument),
+        reusedActiveSession: true,
+      });
+    }
+    const fileType = String(body.fileType || "docx").replace(/^\./, "").toLowerCase();
+    const docx = await docxNode();
+    if (fileType === "doc" || fileType === "dot" || docx.isLegacyOleFile(bytes)) {
+      try { bytes = await convertDocToDocx(bytes, `${body.title || id}.${fileType || "doc"}`); }
+      catch (e) {
+        const unavailable = e.code === "SOFFICE_UNAVAILABLE";
+        return sendJSON(res, unavailable ? 501 : 422, {
+          error: unavailable ? "this server has no .doc converter installed" : `could not convert LegalAI document: ${e.message}`,
+        });
+      }
+    }
+
+    let parsed;
+    try { parsed = await docx.importDocx(toArrayBuffer(bytes)); }
+    catch (e) { return sendJSON(res, 422, { error: `could not parse LegalAI DOCX: ${e.message}` }); }
+
+    await storage.writeFile(docxKey(id), bytes);
+    const document = await writeMeta(id, {
+      title: parsed.title || String(body.title || id).slice(0, 300),
+      state: parsed.html,
+      pageSetup: parsed.pageSetup,
+      comments: parsed.comments,
+      tenantId: body.tenantId,
+      contractId: id,
+      integration: "legalai",
+    }, { skipDocxRegen: true });
+    legalAiSessions.set(id, { businessToken, lastCommittedRev: document.rev, committing: false });
+
+    const minted = mintToken(TOKEN_SECRET, {
+      tenantId: body.tenantId, contractId: id, editorDocumentId: id, ttlSeconds: 60 * 60,
+    });
+    return sendJSON(res, 200, {
+      token: minted.token,
+      expiresAt: minted.payload.exp,
+      document: metaSummary(document),
+    });
+  }
+
   // A scoped token is only valid against routes for its own document; every
   // route with no :id in the path (list, create, import, mint-token, format)
   // requires the global AUTH_TOKEN.
   const pathDocId = (p.match(/^\/api\/documents\/([^/]+)/) || [])[1] || null;
-  if (!authorized(req, url, pathDocId)) return sendJSON(res, 401, { error: "unauthorized" });
+  if (!(await authorized(req, url, pathDocId))) return sendJSON(res, 401, { error: "unauthorized" });
+
+  let integrationMatch = p.match(/^\/api\/documents\/([^/]+)\/commit$/);
+  if (integrationMatch && method === "POST") {
+    const id = integrationMatch[1];
+    if (!validId(id)) return sendJSON(res, 400, { error: "bad id" });
+    const body = await readJSON(req);
+    const session = legalAiSessions.get(id);
+    const businessToken = String(req.headers["x-legalai-token"] || body.businessToken || session?.businessToken || "");
+    const result = await commitLegalAiDocument(id, businessToken, String(body.reason || "manual").slice(0, 30));
+    return sendJSON(res, 200, result);
+  }
 
   if (p === "/api/documents" && method === "GET") {
     const keys = (await storage.listKeys(".json")).filter((f) => !f.endsWith(".versions.json"));
@@ -896,12 +1109,20 @@ function closeRoom(docId) {
   for (const c of set) { try { c.socket.destroy(); } catch {} }
   rooms.delete(docId);
 }
-function handleMessage(client, text) {
+async function handleMessage(client, text) {
   let msg;
   try { msg = JSON.parse(text); } catch { return; }
   if (msg.type === "hello") {
     const docId = String(msg.docId || "");
     if (!validId(docId)) return;
+    if (client.anonymous) {
+      const doc = await readMeta(docId);
+      if (doc && doc.integration === "legalai") {
+        wsSend(client, { type: "error", error: "authentication required for this LegalAI document" });
+        try { client.socket.destroy(); } catch {}
+        return;
+      }
+    }
     // A scoped token's WS connection is only allowed into the one document
     // it was minted for — the raw upgrade handshake accepted any valid
     // scoped token (its target doc isn't known until this "hello"), so this
@@ -957,6 +1178,7 @@ server.on("upgrade", (req, socket) => {
     // Redis relay's exceptClientId matching depends on that uniqueness.
     id: `${INSTANCE_ID.slice(0, 8)}-u${++clientSeq}`, color: COLORS[clientSeq % COLORS.length], socket, docId: null, user: "Guest",
     scopedPayload: auth.scoped,
+    anonymous: !!auth.anonymous,
   };
   let buf = Buffer.alloc(0);
   let fragments = [];
@@ -1005,7 +1227,10 @@ server.on("upgrade", (req, socket) => {
         if (fin) {
           const full = Buffer.concat(fragments);
           fragments = [];
-          handleMessage(client, full.toString("utf8"));
+          void handleMessage(client, full.toString("utf8")).catch((e) => {
+            console.error("websocket message failed:", e.message);
+            try { client.socket.destroy(); } catch {}
+          });
         }
       }
     }
@@ -1029,4 +1254,20 @@ setInterval(() => {
 // sync is the only thing that degrades, same graceful-degradation approach
 // as the save webhook and docx regeneration above).
 initRedis().catch((e) => console.error("redis init failed (continuing without cross-instance sync):", e.message));
+if (LEGALAI_AUTO_COMMIT_ENABLED) {
+  setInterval(async () => {
+    for (const [id, session] of legalAiSessions) {
+      if (!session.businessToken || session.committing) continue;
+      try {
+        const meta = await readMeta(id);
+        if (meta && meta.rev !== session.lastCommittedRev) {
+          await commitLegalAiDocument(id, session.businessToken, "timer");
+        }
+      } catch (e) {
+        console.error(`LegalAI timed commit failed for ${id}:`, e.message);
+      }
+    }
+  }, LEGALAI_AUTO_COMMIT_INTERVAL_MS).unref();
+  console.log(`LegalAI timed commit enabled (${LEGALAI_AUTO_COMMIT_INTERVAL_MS} ms)`);
+}
 server.listen(PORT, HOST, () => console.log(`word-editor on http://${HOST}:${PORT}${AUTH_TOKEN ? " (auth enabled)" : ""}${storage.kind === "s3" ? " (s3 storage)" : ""}`));

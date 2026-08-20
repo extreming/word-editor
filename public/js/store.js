@@ -10,6 +10,43 @@ const API = "/api/documents";
 let authToken = null;
 export function setAuthToken(token) { authToken = token || null; }
 export function getAuthToken() { return authToken; }
+let legalAiBusinessToken = null;
+export function setLegalAiBusinessToken(token) { legalAiBusinessToken = token || null; }
+
+export async function openLegalAiSession({ docId, businessToken, title, fileType, tenantId }) {
+  legalAiBusinessToken = businessToken || null;
+  const response = await fetch("/api/integrations/legalai/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ docId, businessToken, title, fileType, tenantId }),
+  });
+  if (!response.ok) {
+    let detail = "";
+    try { detail = (await response.json()).error || ""; } catch {}
+    throw new Error(detail || `LegalAI editor session failed (HTTP ${response.status})`);
+  }
+  const session = await response.json();
+  setAuthToken(session.token);
+  return session;
+}
+
+export async function commitLegalAiDocument(id, reason = "manual", keepalive = false) {
+  if (!id || !legalAiBusinessToken) return { ok: true, skipped: "not-legalai" };
+  const headers = { "Content-Type": "application/json", "X-LegalAI-Token": legalAiBusinessToken };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const response = await fetch(`${API}/${encodeURIComponent(id)}/commit`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ reason }),
+    keepalive,
+  });
+  if (!response.ok) {
+    let detail = "";
+    try { detail = (await response.json()).error || ""; } catch {}
+    throw new Error(detail || `LegalAI commit failed (HTTP ${response.status})`);
+  }
+  return response.json();
+}
 
 async function req(url, opts = {}) {
   const headers = { ...(opts.headers || {}) };
@@ -113,6 +150,8 @@ export class Autosaver {
     this.onConflict = onConflict || (() => {});
     this.timer = null;
     this.inFlight = false;
+    this.flushPromise = null;
+    this.lastError = null;
     this.dirty = false;
     this.pending = null;
     this.suspended = false;
@@ -125,31 +164,48 @@ export class Autosaver {
     this.dirty = true;
     this.onStatus("saving");
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), this.delayMs);
+    this.timer = setTimeout(() => { void this.flush(); }, this.delayMs);
   }
   async flush() {
-    if (!this.dirty || !this.pending || this.inFlight || this.suspended) return;
+    if (this.suspended) return;
+    if (this.inFlight && this.flushPromise) {
+      await this.flushPromise;
+      if (this.dirty) return this.flush();
+      return;
+    }
+    if (!this.dirty || !this.pending) return;
     this.inFlight = true;
     this.dirty = false;
     const payload = this.pending;
-    try {
-      const doc = await saveDocument(this.id, { ...payload, baseRev: this.rev });
-      this.rev = doc.rev;
-      this.onStatus("saved");
-      this.onSaved(doc);
-    } catch (e) {
-      if (e.conflict) {
-        this.onStatus("conflict");
-        this.onConflict(e.current);
-      } else {
-        this.onStatus("error");
-        this.dirty = true;
+    this.flushPromise = (async () => {
+      try {
+        const doc = await saveDocument(this.id, { ...payload, baseRev: this.rev });
+        this.rev = doc.rev;
+        this.lastError = null;
+        this.onStatus("saved");
+        this.onSaved(doc);
+        return doc;
+      } catch (e) {
+        if (e.conflict) {
+          this.onStatus("conflict");
+          this.onConflict(e.current);
+        } else {
+          this.onStatus("error");
+          this.dirty = true;
+          this.lastError = e;
+          return null;
+        }
+      } finally {
+        this.inFlight = false;
       }
+    })();
+    try {
+      return await this.flushPromise;
     } finally {
-      this.inFlight = false;
+      this.flushPromise = null;
       if (this.dirty) {
         clearTimeout(this.timer);
-        this.timer = setTimeout(() => this.flush(), this.delayMs);
+        this.timer = setTimeout(() => { void this.flush(); }, this.delayMs);
       }
     }
   }

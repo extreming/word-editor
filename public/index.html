@@ -6,7 +6,7 @@
   <title>DocEditor — Online Document Editor</title>
   <script>
     if (new URLSearchParams(location.search).get("embed") === "1") {
-      location.replace("/editor.html" + location.search);
+      location.replace("/editor.html" + location.search + location.hash);
     }
   </script>
   <style>
