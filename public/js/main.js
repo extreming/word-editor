@@ -108,13 +108,26 @@ async function main() {
   let docComments = [];
 
   // ---- clean serialization (pagination spacers + UI marks stripped) ----
+  function clearPaginationOffset(el) {
+    const originalMarginTop = el.getAttribute("data-pg-margin-top");
+    el.style.marginTop = originalMarginTop == null ? "" : originalMarginTop;
+    el.removeAttribute("data-pg");
+    el.removeAttribute("data-pg-margin-top");
+    if (!el.getAttribute("style")) el.removeAttribute("style");
+  }
+  function clearTablePagination(root) {
+    for (const cell of root.querySelectorAll("[data-pg-rowspan]")) {
+      const original = cell.getAttribute("data-pg-rowspan");
+      if (original === "") cell.removeAttribute("rowspan");
+      else cell.setAttribute("rowspan", original);
+      cell.removeAttribute("data-pg-rowspan");
+    }
+    for (const row of root.querySelectorAll("tr[data-pg-row]")) row.remove();
+  }
   function getCleanHtml() {
     const clone = editor.cloneNode(true);
-    for (const el of clone.querySelectorAll("[data-pg]")) {
-      el.style.marginTop = "";
-      el.removeAttribute("data-pg");
-      if (!el.getAttribute("style")) el.removeAttribute("style");
-    }
+    clearTablePagination(clone);
+    for (const el of clone.querySelectorAll("[data-pg]")) clearPaginationOffset(el);
     for (const el of clone.querySelectorAll(".comment-ref.active")) el.classList.remove("active");
     for (const m of clone.querySelectorAll("mark.find-hit")) {
       const p = m.parentNode;
@@ -135,11 +148,8 @@ async function main() {
   function paginate() {
     const page = $("page");
     // clear previous spacers/gaps
-    for (const el of editor.querySelectorAll("[data-pg]")) {
-      el.style.marginTop = "";
-      el.removeAttribute("data-pg");
-      if (!el.getAttribute("style")) el.removeAttribute("style");
-    }
+    clearTablePagination(editor);
+    for (const el of editor.querySelectorAll("[data-pg]")) clearPaginationOffset(el);
     for (const g of page.querySelectorAll(".page-gap")) g.remove();
 
     const s = current.pageSetup || DEFAULT_PAGE_SETUP;
@@ -151,52 +161,140 @@ async function main() {
     const contentH = ph - mTop - mBottom;
     if (contentH < 120) { page.style.minHeight = ph + "px"; return; }
 
-    let pageEnd = mTop + contentH; // page-relative Y where current sheet's content area ends
-    let count = 1;
+    // block.offsetTop is relative to #editor, whose Y=0 is already the first
+    // sheet's content start (after the top page margin). Keep every content
+    // boundary on the same fixed grid as the simulated sheets. Deriving the
+    // next boundary from a block's measured top makes margin-collapse and
+    // rounding errors accumulate on every page.
+    const pageStride = ph + PAGE_GAP;
+    let pageIndex = 0;
+    let pageEnd = contentH;
     let forceNext = false;
-    const gaps = [];
+
+    function expandRowspansAt(row) {
+      const groupRows = [...row.parentElement.children].filter((el) => el.tagName === "TR");
+      const insertionIndex = groupRows.indexOf(row);
+      for (let i = 0; i < insertionIndex; i++) {
+        for (const cell of groupRows[i].cells) {
+          const span = cell.rowSpan;
+          if (span > 1 && i + span > insertionIndex) {
+            if (!cell.hasAttribute("data-pg-rowspan")) {
+              cell.setAttribute("data-pg-rowspan", cell.getAttribute("rowspan") || "");
+            }
+            cell.rowSpan = span + 1;
+          }
+        }
+      }
+    }
+
+    function insertTableSpacer(table, row, requestedHeight) {
+      if (requestedHeight <= 0) return;
+      const originalTop = table.offsetTop + row.offsetTop;
+      expandRowspansAt(row);
+      const spacer = document.createElement("tr");
+      spacer.setAttribute("data-pg-row", "1");
+      spacer.setAttribute("contenteditable", "false");
+      spacer.setAttribute("aria-hidden", "true");
+      const cell = document.createElement("td");
+      const columns = [...table.rows].reduce((max, item) => {
+        const count = [...item.cells].reduce((sum, itemCell) => sum + itemCell.colSpan, 0);
+        return Math.max(max, count);
+      }, 1);
+      cell.colSpan = columns;
+      cell.style.cssText = `height:${requestedHeight}px;padding:0;border:0;background:#fff`;
+      spacer.appendChild(cell);
+      row.parentElement.insertBefore(spacer, row);
+
+      // Collapsed table borders can consume a fraction of the requested row
+      // height. Measure once and compensate so subsequent rows still land on
+      // the exact same fixed page grid as ordinary document blocks.
+      const actualTop = table.offsetTop + row.offsetTop;
+      const correction = requestedHeight - (actualTop - originalTop);
+      if (Math.abs(correction) > 0.25) {
+        cell.style.height = (requestedHeight + correction) + "px";
+      }
+    }
+
+    function paginateTable(table) {
+      const rows = [...table.rows].filter((row) => !row.hasAttribute("data-pg-row"));
+      if (!rows.length) return false;
+      for (const row of rows) {
+        let top = table.offsetTop + row.offsetTop;
+        const h = row.offsetHeight;
+        const pageStart = pageIndex * pageStride;
+        const resumeCurrentPage = pageIndex > 0 && top < pageStart;
+        const needsPush = forceNext || resumeCurrentPage || top >= pageEnd || (top + h > pageEnd && h <= contentH);
+        if (needsPush) {
+          if (!resumeCurrentPage || forceNext) pageIndex++;
+          const nextStart = pageIndex * pageStride;
+          insertTableSpacer(table, row, nextStart - top);
+          top = table.offsetTop + row.offsetTop;
+          pageEnd = pageIndex * pageStride + contentH;
+          forceNext = false;
+        }
+        // A genuinely over-height row cannot be split without changing its
+        // editable cell structure. Keep it intact, but advance the fixed grid
+        // so following rows and sibling blocks resume on the correct page.
+        while (top + h > pageEnd) {
+          pageIndex++;
+          pageEnd = pageIndex * pageStride + contentH;
+        }
+      }
+      return true;
+    }
+
     for (const block of editor.children) {
       // free-floating objects (dragged shapes) don't participate in the flow
       if (getComputedStyle(block).position === "absolute") continue;
+      if (block.tagName === "TABLE" && paginateTable(block)) {
+        if (block.classList.contains("page-break")) forceNext = true;
+        continue;
+      }
       const h = block.offsetHeight;
       let top = block.offsetTop;
-      const needsPush = forceNext || top >= pageEnd || (top + h > pageEnd && h <= contentH);
+      const pageStart = pageIndex * pageStride;
+      const resumeCurrentPage = pageIndex > 0 && top < pageStart;
+      const needsPush = forceNext || resumeCurrentPage || top >= pageEnd || (top + h > pageEnd && h <= contentH);
       if (needsPush) {
-        const nextStart = pageEnd + mBottom + PAGE_GAP + mTop;
+        if (!resumeCurrentPage || forceNext) pageIndex++;
+        const nextStart = pageIndex * pageStride;
         const delta = nextStart - top;
         if (delta > 0) {
+          const originalMarginTop = block.style.marginTop;
           const existing = parseFloat(getComputedStyle(block).marginTop) || 0;
           block.style.marginTop = (existing + delta) + "px";
           block.setAttribute("data-pg", "1");
-          top = block.offsetTop; // re-read: margin collapse may shift the result
+          block.setAttribute("data-pg-margin-top", originalMarginTop);
+          top = block.offsetTop;
+          // Adjacent vertical margins can collapse. Correct the measured
+          // remainder once so the text starts exactly on the paper grid.
+          const remainder = nextStart - top;
+          if (Math.abs(remainder) > 0.25) {
+            block.style.marginTop = (parseFloat(block.style.marginTop) + remainder) + "px";
+            top = block.offsetTop;
+          }
         }
-        gaps.push(pageEnd + mBottom);
-        count++;
-        pageEnd = top + contentH;
+        pageEnd = pageIndex * pageStride + contentH;
         forceNext = false;
-      } else if (top + h > pageEnd) {
-        // Oversized block (typically a tall table) straddles multiple
-        // sheets. It can't be pushed down with a single marginTop the way
-        // smaller blocks are — different parts of the SAME block belong on
-        // different pages — so instead draw page-gap dividers directly over
-        // its content at each break point. That's the same honest
-        // approximation print/PDF export already makes at a mid-block page
-        // break: the row a break lands on gets visually interrupted, same
-        // as it would in real pagination, rather than the break being
-        // invisible and the page just silently running long.
+      }
+      if (top + h > pageEnd && h > contentH) {
+        // Non-table blocks taller than one content area (for example a very
+        // tall image wrapper) cannot be split with a single marginTop. Keep
+        // the fixed sheet grid advancing so later sibling blocks still
+        // resume inside a valid page content area.
         while (top + h > pageEnd) {
-          gaps.push(pageEnd + mBottom);
-          pageEnd += contentH + mBottom + mTop;
-          count++;
+          pageIndex++;
+          pageEnd = pageIndex * pageStride + contentH;
         }
       }
       if (block.classList && block.classList.contains("page-break")) forceNext = true;
     }
-    page.style.minHeight = (pageEnd + mBottom) + "px";
-    for (const y of gaps) {
+    const count = pageIndex + 1;
+    page.style.minHeight = (count * ph + (count - 1) * PAGE_GAP) + "px";
+    for (let boundary = 0; boundary < count - 1; boundary++) {
       const g = document.createElement("div");
       g.className = "page-gap";
-      g.style.top = y + "px";
+      g.style.top = (boundary * pageStride + ph) + "px";
       g.style.height = PAGE_GAP + "px";
       g.setAttribute("contenteditable", "false");
       page.appendChild(g);

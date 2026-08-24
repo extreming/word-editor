@@ -561,6 +561,14 @@ mark.find-hit.current { background: #ff9632; color: #fff; }
 .panel ul { list-style: none; padding: 0; margin: 0; }
 .panel li.muted { color: var(--muted); font-size: 12px; }
 .panel-right { width: 320px; }
+@media (min-width: 701px) {
+  #editor-wrap > .panel {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    height: fit-content;
+  }
+}
 .lib-item { display: flex; gap: 4px; margin-bottom: 4px; }
 .lib-item.current .lib-open { border-color: var(--accent); background: #f0f5ff; }
 .lib-open {
