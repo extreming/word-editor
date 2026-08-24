@@ -84,14 +84,10 @@
     if (opts.tenantId != null) q.set("tenantId", String(opts.tenantId));
     if (opts.history === false) q.set("history", "0");
 
-    // authToken (a scoped token from POST /api/auth/token, or the global
-    // AUTH_TOKEN) goes in the URL FRAGMENT, not the query string: fragments
-    // are never sent in the HTTP request for the iframe document itself, so
-    // this credential doesn't hit server access logs or Referer headers the
-    // way a query param would. main.js reads it client-side from
-    // location.hash on load — see setAuthToken() there.
+    // The LegalAI business token goes in the URL fragment, not the query
+    // string. Fragments are never sent in the HTTP request for the iframe
+    // document, keeping the credential out of access logs and Referer headers.
     const secrets = new URLSearchParams();
-    if (opts.authToken) secrets.set("token", opts.authToken);
     if (opts.businessToken) secrets.set("businessToken", opts.businessToken);
     const hash = secrets.toString() ? `#${secrets.toString()}` : "";
     const iframe = document.createElement("iframe");
@@ -157,10 +153,6 @@
       find: (query, o) => call("find", { query, ...o }),
       replaceAll: (query, replacement, o) => call("replaceAll", { query, replacement, ...o }),
       focus: () => call("focus"),
-      // Rotate the auth token in an already-open editor (e.g. before a
-      // short-lived scoped token expires). Initial load should use the
-      // `authToken` init() option instead — see the comment above iframe.src.
-      setAuthToken: (token) => call("setAuthToken", { token }),
       undo: () => call("undo"),
       redo: () => call("redo"),
       canUndo: () => call("canUndo"),

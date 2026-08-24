@@ -1,21 +1,16 @@
 "use strict";
 // Node HTTP + WebSocket server for the Word-Compatible Editor.
 // - Serves public/ and /api/*
-// - Documents stored via server/storage.js: local disk (default) or an
-//   S3-compatible object store (STORAGE_DRIVER=s3) — see that file
+// - Local-directory working storage for drafts, versions, and generated DOCX
 // - Server-side DOCX<->HTML conversion reuses the client's own docx.js
 //   unmodified via a jsdom shim (server/docxNode.mjs); .docx is regenerated
 //   from the HTML state on every save that changes it
 // - Version history (<id>.versions.json, capped)
 // - Revision-based conflict detection (baseRev -> 409)
-// - Hand-rolled WebSocket (/ws) for presence + live document sync, relayed
-//   across replicas via Redis when REDIS_URL is set
-// - Auth: global bearer token (AUTH_TOKEN) and/or short-lived, per-document
-//   scoped tokens minted via POST /api/auth/token — see server/scopedAuth.js
-// - Optional save webhook (SAVE_WEBHOOK_URL env) carrying the fresh .docx
+// - Hand-rolled WebSocket (/ws) for single-instance presence + live sync
+// - LegalAI sessions use short-lived, per-document scoped tokens
 
 const http = require("http");
-const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -25,13 +20,8 @@ const { convertToDocx: convertDocToDocx } = require("./server/docConvert");
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "127.0.0.1";
-const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
 // Secret used to sign/verify short-lived scoped tokens (see server/scopedAuth.js).
-// Defaults to AUTH_TOKEN so a single env var is enough to get started; set it
-// separately to avoid reusing the server-to-server secret as a signing key.
-const TOKEN_SECRET = process.env.TOKEN_SECRET || AUTH_TOKEN;
-const WEBHOOK = process.env.SAVE_WEBHOOK_URL || "";
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+const TOKEN_SECRET = process.env.TOKEN_SECRET || "";
 const LEGALAI_BASE_URL = (process.env.LEGALAI_BASE_URL || "").replace(/\/$/, "");
 const LEGALAI_CONTENT_PATH = process.env.LEGALAI_CONTENT_PATH || "/zOffice/{docId}/content";
 const LEGALAI_TOKEN_HEADER = process.env.LEGALAI_TOKEN_HEADER || "token";
@@ -39,7 +29,6 @@ const LEGALAI_REQUEST_TIMEOUT_MS = Math.max(Number(process.env.LEGALAI_REQUEST_T
 const LEGALAI_AUTO_COMMIT_ENABLED = /^(1|true|yes)$/i.test(process.env.LEGALAI_AUTO_COMMIT_ENABLED || "false");
 const LEGALAI_AUTO_COMMIT_INTERVAL_MS = Math.max(Number(process.env.LEGALAI_AUTO_COMMIT_INTERVAL_MS) || 300000, 60000);
 const VERSION_HISTORY_ENABLED = !/^(0|false|no)$/i.test(process.env.VERSION_HISTORY_ENABLED || "true");
-const WEBHOOK_INLINE_MAX = 4 * 1024 * 1024; // inline docx bytes in the webhook up to this size; larger docs are sent as a download URL only
 const MAX_BODY = 64 * 1024 * 1024; // 64 MB
 const MAX_VERSIONS = 30;
 const VERSION_MIN_INTERVAL = 90 * 1000; // min ms between auto snapshots
@@ -80,14 +69,10 @@ const PUBLIC = path.join(ROOT, "public");
 const DATA = process.env.DATA_DIR
   ? (path.isAbsolute(process.env.DATA_DIR) ? process.env.DATA_DIR : path.join(ROOT, process.env.DATA_DIR))
   : path.join(ROOT, "data");
-// Document storage: local disk (default — DATA above) or an S3-compatible
-// object store (STORAGE_DRIVER=s3), so word-editor can run as multiple
-// replicas behind a load balancer without each instance owning a private
-// disk. See server/storage.js.
+// Local working storage. LegalAI remains the system of record for formally
+// committed business documents; this directory supports editor drafts,
+// versions, the document library, and generated DOCX artifacts.
 const storage = createStorage(DATA);
-if (storage.kind === "s3" && storage.ensureBucket) {
-  storage.ensureBucket().catch((e) => console.error("s3 ensureBucket failed:", e.message));
-}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -178,8 +163,7 @@ async function writeMeta(id, body, opts = {}) {
     comments: body.comments !== undefined ? body.comments : (existing.comments || []),
     trackChanges: body.trackChanges !== undefined ? !!body.trackChanges : !!existing.trackChanges,
     // The tenantId/contractId mapping (see server/scopedAuth.js and
-    // POST /api/auth/token) — set at import time or on first token mint,
-    // and preserved for the document's lifetime after that.
+    // LegalAI session binding, preserved for the document's lifetime.
     tenantId: body.tenantId !== undefined ? (body.tenantId ? String(body.tenantId).slice(0, 200) : null) : (existing.tenantId || null),
     contractId: body.contractId !== undefined ? (body.contractId ? String(body.contractId).slice(0, 200) : null) : (existing.contractId || null),
     integration: body.integration !== undefined ? String(body.integration || "").slice(0, 50) : (existing.integration || null),
@@ -204,50 +188,8 @@ function metaSummary(d) {
   return { id: d.id, title: d.title, updatedAt: d.updatedAt, createdAt: d.createdAt, rev: d.rev || 0 };
 }
 
-// Fired after a formal commit. `docxFresh` tells the receiver whether the .docx this
-// refers to was actually regenerated from the current HTML state (false right
-// after import, or if regeneration failed) — LegalAI should treat a webhook
-// with docxFresh:false as "html state changed, docx not guaranteed current"
-// and either wait for a later save or fetch again.
-//
-// NOTE: this wire format (docx inlined as base64 up to WEBHOOK_INLINE_MAX,
-// else a docxUrl) is this project's proposal for the write-back contract —
-// it still needs to be confirmed against whatever LegalAI's receiving webhook
-// actually expects before relying on it in production.
-async function fireWebhook(meta, docxFresh, reason) {
-  if (!WEBHOOK) return;
-  try {
-    const payload = {
-      event: "commit", reason, id: meta.id, title: meta.title, rev: meta.rev, updatedAt: meta.updatedAt,
-      contractId: meta.contractId || null, tenantId: meta.tenantId || null,
-      docxFresh: !!docxFresh,
-    };
-    const docxBytes = docxFresh ? await storage.readFile(docxKey(meta.id)) : null;
-    if (docxBytes) {
-      const bytes = docxBytes;
-      if (bytes.length <= WEBHOOK_INLINE_MAX) {
-        payload.docxBase64 = bytes.toString("base64");
-      } else if (PUBLIC_BASE_URL) {
-        payload.docxUrl = `${PUBLIC_BASE_URL}/api/documents/${meta.id}/docx`;
-      }
-    }
-    const body = JSON.stringify(payload);
-    const u = new URL(WEBHOOK);
-    const mod = u.protocol === "https:" ? https : http;
-    await new Promise((resolve) => {
-      const req = mod.request(u, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-        timeout: 5000,
-      }, (res) => { res.resume(); resolve(); });
-      req.on("error", (e) => { console.error("webhook error:", e.message); resolve(); });
-      req.end(body);
-    });
-  } catch (e) { console.error("webhook error:", e.message); }
-}
-
 // A LegalAI session is deliberately memory-only: the user's business token
-// is never written into document metadata or object storage. It is refreshed
+// is never written into document metadata or local storage. It is refreshed
 // whenever the host opens the editor and is only retained so the optional
 // server-side timer (disabled by default) can commit while that session lives.
 const legalAiSessions = new Map(); // docId -> { businessToken, lastCommittedRev, committing }
@@ -327,7 +269,7 @@ async function publishLegalAiDocument(meta, businessToken, reason) {
   try {
     const parsed = responseText ? JSON.parse(responseText) : { ok: true };
     // LegalAI's BusinessException handler returns HTTP 200 with a non-zero
-    // BaseResponse code, so HTTP status alone cannot prove the S3 write worked.
+    // BaseResponse code, so HTTP status alone cannot prove the upstream write worked.
     if (parsed && parsed.code != null && String(parsed.code) !== "0") {
       throw Object.assign(new Error(`LegalAI document save was rejected: ${parsed.msg || parsed.code}`), { status: 502 });
     }
@@ -357,7 +299,6 @@ async function commitLegalAiDocument(id, businessToken, reason = "manual") {
     if (!docxFresh) throw Object.assign(new Error("could not generate the current DOCX; LegalAI was not updated"), { status: 500 });
     const legalAi = await publishLegalAiDocument(meta, businessToken, reason);
     session.lastCommittedRev = meta.rev;
-    await fireWebhook(meta, true, reason);
     return { ok: true, rev: meta.rev, reason, legalAi };
   } finally {
     session.committing = false;
@@ -373,33 +314,25 @@ function credentialFrom(req, url) {
   }
   return "";
 }
-// Two kinds of credential: the global AUTH_TOKEN (server-to-server — LegalAI's
-// backend calling the REST API directly, or minting scoped tokens), or a
-// short-lived scoped token minted via POST /api/auth/token (see
-// server/scopedAuth.js), bound to one tenantId/contractId/editorDocumentId.
-// `scoped` is null for the global token (full access) and the verified
-// payload for a scoped one (access limited to its own document).
+// LegalAI session credentials are short-lived scoped tokens bound to one
+// tenantId/contractId/editorDocumentId. Standalone editor documents remain
+// accessible without a token; LegalAI-bound documents always require their
+// scoped token.
 function authenticateRequest(req, url) {
   const cred = credentialFrom(req, url);
-  if (AUTH_TOKEN && cred && cred === AUTH_TOKEN) return { ok: true, scoped: null, global: true, anonymous: false };
   if (cred && TOKEN_SECRET) {
     const payload = verifyToken(TOKEN_SECRET, cred);
-    if (payload) return { ok: true, scoped: payload, global: false, anonymous: false };
+    if (payload) return { ok: true, scoped: payload, anonymous: false };
+    return { ok: false, scoped: null, anonymous: false };
   }
-  // Preserve the upstream editor's unauthenticated standalone/demo mode when
-  // no global AUTH_TOKEN was configured. Integrated LegalAI documents are
-  // still protected below by authorized() and the WebSocket hello check.
-  if (!AUTH_TOKEN) return { ok: true, scoped: null, global: false, anonymous: true };
-  return { ok: false, scoped: null, global: false, anonymous: false };
+  return { ok: true, scoped: null, anonymous: true };
 }
 // pathDocId: the :id segment of /api/documents/:id/... for the requested
-// route, or null for routes with no specific document (list, create, import,
-// mint-token, format). Scoped tokens are only valid against their own
-// document's routes; every no-doc-id route requires the global token.
+// route, or null for routes with no specific document. Scoped tokens are only
+// valid against their own document's routes.
 async function authorized(req, url, pathDocId) {
-  const { ok, scoped, global, anonymous } = authenticateRequest(req, url);
+  const { ok, scoped, anonymous } = authenticateRequest(req, url);
   if (!ok) return false;
-  if (global) return true;
   if (pathDocId && anonymous) {
     const doc = await readMeta(pathDocId);
     if (doc && doc.integration === "legalai") return false;
@@ -561,9 +494,7 @@ async function api(req, res, url) {
     });
   }
 
-  // A scoped token is only valid against routes for its own document; every
-  // route with no :id in the path (list, create, import, mint-token, format)
-  // requires the global AUTH_TOKEN.
+  // A scoped token is only valid against routes for its own document.
   const pathDocId = (p.match(/^\/api\/documents\/([^/]+)/) || [])[1] || null;
   if (!(await authorized(req, url, pathDocId))) return sendJSON(res, 401, { error: "unauthorized" });
 
@@ -599,46 +530,10 @@ async function api(req, res, url) {
     return sendJSON(res, 200, doc);
   }
 
-  // Mint a short-lived, document-scoped token (see server/scopedAuth.js).
-  // Only callable with the global AUTH_TOKEN (pathDocId is null for this
-  // route, so a scoped token is never itself sufficient to mint another one).
-  // Binds tenantId/contractId onto the target document the first time either
-  // is supplied, and rejects a mismatched tenantId/contractId against a
-  // document that's already bound — this is what "single-contract scoped
-  // credential" enforcement rests on for every later request.
-  if (p === "/api/auth/token" && method === "POST") {
-    const body = await readJSON(req);
-    const editorDocumentId = body.editorDocumentId != null ? String(body.editorDocumentId) : null;
-    if (editorDocumentId) {
-      if (!validId(editorDocumentId)) return sendJSON(res, 400, { error: "bad editorDocumentId" });
-      const doc = await readMeta(editorDocumentId);
-      if (!doc) return sendJSON(res, 404, { error: "document not found" });
-      if (doc.tenantId && body.tenantId != null && String(body.tenantId) !== doc.tenantId) {
-        return sendJSON(res, 403, { error: "tenantId does not match this document's existing binding" });
-      }
-      if (doc.contractId && body.contractId != null && String(body.contractId) !== doc.contractId) {
-        return sendJSON(res, 403, { error: "contractId does not match this document's existing binding" });
-      }
-      if ((body.tenantId != null || body.contractId != null) && (!doc.tenantId || !doc.contractId)) {
-        await writeMeta(editorDocumentId, {
-          tenantId: doc.tenantId || body.tenantId, contractId: doc.contractId || body.contractId,
-        }, { skipDocxRegen: true });
-      }
-    }
-    if (!TOKEN_SECRET) {
-      return sendJSON(res, 500, { error: "no AUTH_TOKEN/TOKEN_SECRET configured on this server; scoped tokens are disabled" });
-    }
-    const { token, payload } = mintToken(TOKEN_SECRET, {
-      tenantId: body.tenantId, contractId: body.contractId, editorDocumentId, ttlSeconds: body.ttlSeconds,
-    });
-    return sendJSON(res, 200, { token, ...payload });
-  }
-
   // Import a .docx (or a legacy .doc/.dot, converted first via LibreOffice —
   // see server/docConvert.js): parse it server-side into HTML state right
-  // away, so a caller (e.g. LegalAI's backend, which opens the editor iframe
-  // against this id without ever going through the client's own "open file"
-  // flow) gets a document that isn't blank. A raw upload that still fails to
+  // away, so the standalone editor's "open file" flow gets a document that
+  // isn't blank. A raw upload that still fails to
   // parse as OOXML after that is rejected with a clear error instead of
   // silently creating an empty document.
   if (p === "/api/documents/import" && method === "POST") {
@@ -1007,49 +902,10 @@ const server = http.createServer(async (req, res) => {
 
 // ============================================================
 // WebSocket (RFC 6455) — hand-rolled, no dependencies.
-// Rooms keyed by document id; relays presence, updates, cursors.
-//
-// Cross-instance sync: `rooms` is only ever local to this process, so with
-// multiple replicas behind a load balancer, two editors on the same document
-// but different instances would never see each other's changes. When
-// REDIS_URL is set, broadcast() also publishes to a shared Redis pub/sub
-// channel; every instance (including the publisher) is subscribed, and the
-// subscriber delivers to that instance's own local clients. The publisher
-// tags its own messages with its instance id and skips re-delivering them
-// when they come back around the subscription, since it already delivered
-// them locally and synchronously at publish time — this keeps same-instance
-// delivery instant and independent of Redis being up.
-//
-// NOTE — known scope limit: presence (roomUsers/"who's online") is NOT
-// aggregated across instances yet, only content/cursor updates are. A user
-// connected to instance A won't see presence for a user on instance B. Doing
-// that correctly needs a shared, heartbeated registry (e.g. a Redis hash per
-// document with staleness sweeping) — left as a follow-up since content sync
-// is the correctness-critical piece and presence is view-only.
+// Rooms are process-local and keyed by document id; they relay presence,
+// document updates, and cursors between clients connected to this instance.
 // ============================================================
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const INSTANCE_ID = crypto.randomUUID();
-const REDIS_CHANNEL = "we:broadcast";
-let redisPub = null;
-let redisSub = null;
-async function initRedis() {
-  const url = process.env.REDIS_URL;
-  if (!url) return;
-  const { createClient } = require("redis");
-  redisPub = createClient({ url });
-  redisSub = redisPub.duplicate();
-  redisPub.on("error", (e) => console.error("redis (pub) error:", e.message));
-  redisSub.on("error", (e) => console.error("redis (sub) error:", e.message));
-  await redisPub.connect();
-  await redisSub.connect();
-  await redisSub.subscribe(REDIS_CHANNEL, (message) => {
-    let msg;
-    try { msg = JSON.parse(message); } catch { return; }
-    if (msg.originInstanceId === INSTANCE_ID) return; // already delivered locally at publish time
-    broadcastLocal(msg.docId, msg.exceptClientId, msg.obj);
-  });
-  console.log("redis pub/sub connected — cross-instance collab sync enabled");
-}
 const rooms = new Map(); // docId -> Set<client>
 const COLORS = ["#e91e63", "#2196f3", "#4caf50", "#ff9800", "#9c27b0", "#00bcd4", "#795548", "#607d8b"];
 let clientSeq = 0;
@@ -1087,20 +943,12 @@ function broadcastLocal(docId, exceptClientId, obj) {
 function broadcast(docId, exceptClient, obj) {
   const exceptClientId = exceptClient ? exceptClient.id : null;
   broadcastLocal(docId, exceptClientId, obj);
-  if (redisPub && redisPub.isReady) {
-    redisPub.publish(REDIS_CHANNEL, JSON.stringify({ docId, exceptClientId, obj, originInstanceId: INSTANCE_ID }))
-      .catch((e) => console.error("redis publish error:", e.message));
-  }
 }
 function leaveRoom(client) {
   const set = rooms.get(client.docId);
   if (!set) return;
   set.delete(client);
   if (set.size === 0) rooms.delete(client.docId);
-  // presence is instance-local only (see note above initRedis) — relaying it
-  // through Redis would overwrite other instances' local user lists instead
-  // of merging with them, so this deliberately uses broadcastLocal, not
-  // broadcast.
   else broadcastLocal(client.docId, null, { type: "presence", users: roomUsers(client.docId) });
 }
 function closeRoom(docId) {
@@ -1138,7 +986,7 @@ async function handleMessage(client, text) {
     if (!rooms.has(docId)) rooms.set(docId, new Set());
     rooms.get(docId).add(client);
     wsSend(client, { type: "welcome", id: client.id, color: client.color, users: roomUsers(docId) });
-    broadcastLocal(docId, client.id, { type: "presence", users: roomUsers(docId) }); // instance-local only, see note above initRedis
+    broadcastLocal(docId, client.id, { type: "presence", users: roomUsers(docId) });
     return;
   }
   if (!client.docId) return;
@@ -1174,9 +1022,7 @@ server.on("upgrade", (req, socket) => {
   socket.setNoDelay(true);
 
   const client = {
-    // instance-prefixed so client ids stay unique across replicas — the
-    // Redis relay's exceptClientId matching depends on that uniqueness.
-    id: `${INSTANCE_ID.slice(0, 8)}-u${++clientSeq}`, color: COLORS[clientSeq % COLORS.length], socket, docId: null, user: "Guest",
+    id: `u${++clientSeq}`, color: COLORS[clientSeq % COLORS.length], socket, docId: null, user: "Guest",
     scopedPayload: auth.scoped,
     anonymous: !!auth.anonymous,
   };
@@ -1249,11 +1095,6 @@ setInterval(() => {
   }
 }, 30000).unref();
 
-// Redis connects in the background — if it's slow or unreachable, the server
-// still starts and serves single-instance traffic normally (cross-instance
-// sync is the only thing that degrades, same graceful-degradation approach
-// as the save webhook and docx regeneration above).
-initRedis().catch((e) => console.error("redis init failed (continuing without cross-instance sync):", e.message));
 if (LEGALAI_AUTO_COMMIT_ENABLED) {
   setInterval(async () => {
     for (const [id, session] of legalAiSessions) {
@@ -1270,4 +1111,4 @@ if (LEGALAI_AUTO_COMMIT_ENABLED) {
   }, LEGALAI_AUTO_COMMIT_INTERVAL_MS).unref();
   console.log(`LegalAI timed commit enabled (${LEGALAI_AUTO_COMMIT_INTERVAL_MS} ms)`);
 }
-server.listen(PORT, HOST, () => console.log(`word-editor on http://${HOST}:${PORT}${AUTH_TOKEN ? " (auth enabled)" : ""}${storage.kind === "s3" ? " (s3 storage)" : ""}`));
+server.listen(PORT, HOST, () => console.log(`word-editor on http://${HOST}:${PORT}`));

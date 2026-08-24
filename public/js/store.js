@@ -2,14 +2,9 @@
 
 const API = "/api/documents";
 
-// Bearer credential for this session: either the server's global AUTH_TOKEN
-// (server-to-server use) or a short-lived, document-scoped token minted via
-// POST /api/auth/token. Set via ?token= in the editor URL, or — the
-// preferred path for an embedded iframe, since a URL can leak through
-// referrers/history/logs — via the postMessage SDK's setAuthToken command.
-let authToken = null;
-export function setAuthToken(token) { authToken = token || null; }
-export function getAuthToken() { return authToken; }
+// Short-lived document token returned by the LegalAI session bootstrap.
+// It is used only for this iframe's document REST calls and WebSocket room.
+let sessionToken = null;
 let legalAiBusinessToken = null;
 export function setLegalAiBusinessToken(token) { legalAiBusinessToken = token || null; }
 
@@ -26,14 +21,14 @@ export async function openLegalAiSession({ docId, businessToken, title, fileType
     throw new Error(detail || `LegalAI editor session failed (HTTP ${response.status})`);
   }
   const session = await response.json();
-  setAuthToken(session.token);
+  sessionToken = session.token || null;
   return session;
 }
 
 export async function commitLegalAiDocument(id, reason = "manual", keepalive = false) {
   if (!id || !legalAiBusinessToken) return { ok: true, skipped: "not-legalai" };
   const headers = { "Content-Type": "application/json", "X-LegalAI-Token": legalAiBusinessToken };
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
   const response = await fetch(`${API}/${encodeURIComponent(id)}/commit`, {
     method: "POST",
     headers,
@@ -50,7 +45,7 @@ export async function commitLegalAiDocument(id, reason = "manual", keepalive = f
 
 async function req(url, opts = {}) {
   const headers = { ...(opts.headers || {}) };
-  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+  if (sessionToken) headers["Authorization"] = `Bearer ${sessionToken}`;
   const r = await fetch(url, { ...opts, headers });
   if (r.status === 409) {
     const body = await r.json();
@@ -242,7 +237,7 @@ export class SyncClient {
     this.closedByUs = false;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     try {
-      const qs = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
+      const qs = sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : "";
       this.ws = new WebSocket(`${proto}//${location.host}/ws${qs}`);
     } catch { return; }
     this.ws.addEventListener("open", () => {

@@ -16,7 +16,7 @@ import {
 import {
   Autosaver, SyncClient, createDocument, getDocument, listDocuments, deleteDocument,
   importDocxFile, putDocx, saveDocument, listVersions, getVersion, restoreVersion,
-  setAuthToken, openLegalAiSession, commitLegalAiDocument,
+  openLegalAiSession, commitLegalAiDocument,
 } from "./store.js";
 import { openPdf, closePdf, isPdfMode, getPdfInfo } from "./pdf-view.js";
 import { t, applyI18n, getLocale, setLocale } from "./i18n.js";
@@ -25,21 +25,13 @@ const LS_KEY = "word-editor:current-id";
 const LS_USER = "word-editor:user";
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-// A scoped auth token arrives either in the URL fragment (#token=…, what the
-// SDK's `authToken` init() option uses — fragments are never sent in the
-// HTTP request for this document, so they don't hit access logs or Referer
-// headers) or, for quick manual testing, as a plain ?token= query param.
-// Cleared from the visible URL immediately either way so it doesn't linger
-// in browser history for the lifetime of the tab.
+// The LegalAI business token arrives in the URL fragment. Fragments are not
+// sent in the HTTP request for the iframe page, so the token stays out of
+// access logs and Referer headers. Remove it from the visible URL immediately.
 let legalAiBusinessToken = null;
 {
   const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
-  const urlToken = hashParams.get("token") || params.get("token");
   legalAiBusinessToken = hashParams.get("businessToken") || null;
-  if (urlToken) {
-    setAuthToken(urlToken);
-    params.delete("token");
-  }
   const qs = params.toString();
   history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : ""));
 }
@@ -1435,7 +1427,7 @@ async function main() {
   // Browser shutdown cannot wait for asynchronous work. Internal autosave is
   // already debounced continuously; this keepalive commit asks the server to
   // publish the latest completed draft. Normal LegalAI route changes use the
-  // SDK `close()` command and await both the draft flush and S3 write-back.
+  // SDK `close()` command and await both the draft flush and LegalAI write-back.
   window.addEventListener("pagehide", () => {
     clearTimeout(legalAiTokenRefreshTimer);
     void autosaver.flush();
@@ -1487,7 +1479,6 @@ async function main() {
         case "find": reply({ matches: findPanel.find((m.args && m.args.query) || "", m.args || {}) }); break;
         case "replaceAll": reply({ replaced: findPanel.replaceAll((m.args && m.args.query) || "", (m.args && m.args.replacement) || "", m.args || {}) }); break;
         case "focus": editor.focus(); reply({ ok: true }); break;
-        case "setAuthToken": setAuthToken((m.args && m.args.token) || null); reply({ ok: true }); break;
         case "addComment": {
           const text = ((m.args && m.args.text) || "").trim();
           if (!text) { reply(null, "text required"); break; }

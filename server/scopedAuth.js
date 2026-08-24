@@ -6,10 +6,10 @@
 // Format: "v1.<base64url(JSON payload)>.<base64url(HMAC-SHA256 signature)>"
 // Payload: { tenantId, contractId, editorDocumentId, iat, exp }
 //
-// This is word-editor's own proposal for how LegalAI mints per-contract
-// credentials (see POST /api/auth/token) — it is NOT tied to any auth scheme
-// LegalAI's backend may already use elsewhere; treat it as a starting
-// contract to confirm with them, not a fixed integration requirement.
+// These credentials are minted internally after a LegalAI business token has
+// been validated by POST /api/integrations/legalai/session. They protect the
+// editor's document REST calls and WebSocket room without exposing the
+// long-lived LegalAI business token to those requests.
 
 const crypto = require("crypto");
 

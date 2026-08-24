@@ -4,11 +4,9 @@ A browser-based, Word-compatible rich-text editor. The client is **zero
 dependencies** — no npm packages, no bundler — vanilla ES modules, the
 browser's native `CompressionStream`/`DecompressionStream` for .docx ZIP
 handling, and hand-written OOXML (WordprocessingML) mapping. The Node server
-reuses that exact client-side parser for server-side DOCX↔HTML conversion (via
-a jsdom DOM shim), and carries a small set of server-only dependencies —
-`jsdom` for that, `redis` for optional cross-instance collab sync. Both stay
-optional at runtime: with no `STORAGE_DRIVER=s3` / `REDIS_URL` set, the server
-runs exactly as a single dependency-light instance against local disk.
+reuses that exact client-side parser for server-side DOCX↔HTML conversion via
+a jsdom DOM shim. The server keeps editor working data in `DATA_DIR`; LegalAI
+remains the system of record for formally committed business documents.
 
 Demo: https://doc.mochi-flow.com
 
@@ -16,15 +14,25 @@ Demo: https://doc.mochi-flow.com
 ## Quick start
 
 ```bash
-bash run.sh                 # http://localhost:3001
+bash run.sh                 # after npm ci; http://localhost:3001
 # or
-npm install && node server.js
+npm ci && npm start
 # env overrides:
-PORT=4000 HOST=0.0.0.0 DATA_DIR=/var/word-editor AUTH_TOKEN=secret node server.js
+PORT=4000 HOST=0.0.0.0 DATA_DIR=/var/word-editor node server.js
 ```
 
-Full env var reference (auth, storage, collab sync, webhook) is in
+Requires Node.js 22. Full env var reference is in
 [Server configuration](#server-configuration) below.
+
+### Why vanilla JavaScript
+
+The editor uses browser-native ES modules because its core is DOM-intensive:
+selection/range handling, `contenteditable`, clipboard events, print layout,
+WebSocket, and OOXML import/export. Avoiding a framework keeps the SDK payload
+small, removes a build step, and prevents a virtual DOM from competing with the
+browser's live editable DOM. Vue remains suitable for a surrounding business
+application, but would add little value inside this editor core unless the UI
+is later redesigned around many state-driven components.
 
 ### Docker
 
@@ -32,9 +40,6 @@ Full env var reference (auth, storage, collab sync, webhook) is in
 docker build -t word-editor .
 docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word-editor
 # or: docker compose up -d --build
-
-# multi-instance (object storage + Redis-backed collab sync across replicas):
-docker compose --profile multi-instance up -d --build
 ```
 
 ## Features
@@ -118,19 +123,11 @@ docker compose --profile multi-instance up -d --build
   `GET/PUT /api/documents/:id/docx`, `POST /api/documents/import` (parses the
   uploaded .docx into real HTML state server-side — see below),
   `GET /api/documents/:id/versions[/:n]`, `POST /api/documents/:id/restore`,
-  `POST /api/auth/token` (mint a scoped credential), `GET /api/health`
-- WebSocket `/ws`: rooms per document, presence, update/cursor relay —
-  relayed across replicas via Redis when `REDIS_URL` is set (presence stays
-  per-instance; content/cursor sync is cross-instance)
-- Auth: set `AUTH_TOKEN` for a global server-to-server credential (all API/WS
-  calls require `Authorization: Bearer <token>` or `?token=`), and/or mint
-  short-lived, single-document `POST /api/auth/token` credentials for embedding
-  a specific tenant/contract — see [server/scopedAuth.js](server/scopedAuth.js)
-- Optional commit notification webhook: set `SAVE_WEBHOOK_URL` → POST
-  `{event, id, title, rev, updatedAt, tenantId, contractId, docxFresh, docxBase64|docxUrl}`
-  after a formal commit, with the freshly-regenerated .docx inlined (or a download URL
-  for large files) — this is word-editor's proposal for a write-back contract,
-  not a fixed integration requirement
+  `GET /api/health`
+- WebSocket `/ws`: process-local rooms per document, presence and update/cursor relay
+- LegalAI session bootstrap validates the business token and internally issues
+  a short-lived token scoped to one tenant/contract/document — see
+  [server/scopedAuth.js](server/scopedAuth.js)
 - Legacy `.doc`/`.dot` import: converted to .docx via LibreOffice headless
   before parsing (needs the `soffice` binary — see the Dockerfile, or set
   `SOFFICE_PATH`); without it, `.doc` import fails with a clear 501 instead of
@@ -143,14 +140,8 @@ docker compose --profile multi-instance up -d --build
 | Env var | Default | Purpose |
 |---|---|---|
 | `PORT` / `HOST` | `3001` / `127.0.0.1` | listen address |
-| `DATA_DIR` | `./data` | local-disk storage root (ignored when `STORAGE_DRIVER=s3`) |
-| `AUTH_TOKEN` | unset (auth disabled) | global server-to-server bearer credential |
-| `TOKEN_SECRET` | = `AUTH_TOKEN` | HMAC signing key for scoped tokens; set separately to avoid reusing the server-to-server secret as a signing key |
-| `SAVE_WEBHOOK_URL` | unset | POSTed after a formal commit — see above |
-| `PUBLIC_BASE_URL` | unset | externally-reachable origin, used to build a `docxUrl` in the webhook when the docx is too large to inline |
-| `STORAGE_DRIVER` | `local` | `local` or `s3` — see [server/storage.js](server/storage.js) |
-| `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_REGION` | — | required when `STORAGE_DRIVER=s3`; any S3-compatible endpoint (MinIO, OSS, real S3) works, path-style |
-| `REDIS_URL` | unset | enables cross-instance WebSocket relay (pub/sub) — see [server.js](server.js)'s `initRedis()` |
+| `DATA_DIR` | `./data` | local working directory for drafts, versions, and generated DOCX files |
+| `TOKEN_SECRET` | required for LegalAI | HMAC signing key for the short-lived document token issued by the LegalAI session endpoint |
 | `SOFFICE_PATH` | `soffice` (PATH lookup) | path to the LibreOffice binary used for legacy `.doc`/`.dot` conversion |
 | `LEGALAI_BASE_URL` | unset | LegalAI backend base URL, for example `https://legalai.example.com/legalai` |
 | `LEGALAI_CONTENT_PATH` | `/zOffice/{docId}/content` | existing FileZ-compatible download/save endpoint used by word-editor |
@@ -181,7 +172,7 @@ const editor = DocEditor.init({
 The iframe exchanges that business token for a short-lived word-editor token
 only after the word-editor server successfully downloads
 `GET {LEGALAI_BASE_URL}/zOffice/{docId}/content`. Draft autosaves update only
-word-editor's local/shared storage. `Ctrl+S`, the File > Save action, the SDK
+word-editor's local working directory. `Ctrl+S`, the File > Save action, the SDK
 `save()`/`close()` commands, and the best-effort browser `pagehide` hook call
 `POST /api/documents/{docId}/commit`; word-editor then uploads the generated
 DOCX to the same FileZ-compatible LegalAI content endpoint. The business token
@@ -191,12 +182,10 @@ document metadata or storage objects.
 ## Architecture
 
 ```
-server.js              HTTP + WebSocket server, storage/versions/auth/webhook,
-                       Redis-relayed collab sync
+server.js              HTTP + WebSocket server, storage/versions/LegalAI sessions
 server/docxNode.mjs     jsdom DOM shim so the client's own docx.js can run
                        server-side unmodified (DOCX<->HTML conversion)
-server/storage.js       local-disk / S3-compatible storage abstraction
-                       (hand-signed SigV4, no aws-sdk)
+server/storage.js       local-directory working storage
 server/scopedAuth.js    short-lived, document-scoped bearer tokens (HMAC)
 server/docConvert.js    legacy .doc/.dot -> .docx via LibreOffice headless
 public/js/docx.js      ZIP (native streams) + CRC32 + OOXML <-> HTML mapping
@@ -207,8 +196,7 @@ public/js/sdk.js       embeddable host-page SDK (iframe + promise bridge)
 public/embed-example.html   SDK demo
 ```
 
-Storage keys (local disk under `DATA_DIR`, or S3 object keys under the
-configured bucket): `<id>.json` (state + pageSetup + rev + tenantId/contractId),
+Storage files under `DATA_DIR`: `<id>.json` (state + pageSetup + rev + tenantId/contractId),
 `<id>.docx` (regenerated from the HTML state on every save that changes it),
 `<id>.versions.json` (history).
 
@@ -233,7 +221,7 @@ configured bucket): `<id>.json` (state + pageSetup + rev + tenantId/contractId),
 | Version history & restore | ✅ |
 | Embedding, JS SDK, events | ✅ |
 | Theming/multi-language UI | ❌ (CSS variables make theming straightforward) |
-| Auth, webhooks, autosave, locking | ✅ token auth, save webhook, autosave, rev-guard |
+| Auth, autosave, locking | ✅ LegalAI session token, autosave, rev-guard |
 | Docker deployment | ✅ |
 
 ### Production notes — read this

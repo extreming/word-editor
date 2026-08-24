@@ -1,13 +1,8 @@
 # The editor itself (public/js/*.js) stays zero-dependency vanilla JS. The
-# Node server has a small set of server-only dependencies: jsdom (DOM shim so
-# the client's own docx.js can be reused for server-side DOCX<->HTML
-# conversion — see server/docxNode.mjs), redis (cross-instance collab sync —
-# see server.js's initRedis()), and the system-level `soffice` binary
-# (LibreOffice headless, for legacy .doc/.dot -> .docx conversion — see
-# server/docConvert.js). All three are optional at runtime: without
-# STORAGE_DRIVER=s3 / REDIS_URL / a working soffice, the server runs exactly
-# as before, just without that one capability (.doc import degrades to a
-# clear "please convert manually" error instead of a crash).
+# Node server depends on jsdom so the client's own docx.js can be reused for
+# server-side DOCX<->HTML conversion (see server/docxNode.mjs). A system-level
+# `soffice` binary is optional; without it, legacy .doc/.dot import returns a
+# clear error while .docx editing continues to work.
 #
 # Debian-based rather than Alpine specifically for LibreOffice: its headless
 # conversion is the standard, well-tested combination most doc-processing
@@ -25,8 +20,8 @@ COPY server.js ./
 COPY server ./server
 COPY public ./public
 
-# Persist documents inside the container when using the local storage driver
-# (mount a named volume to keep them). Not used when STORAGE_DRIVER=s3.
+# Persist editor working data by mounting /app/data. LegalAI remains the
+# system of record for formally committed business documents.
 RUN mkdir -p /app/data
 
 ENV HOST=0.0.0.0

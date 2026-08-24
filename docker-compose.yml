@@ -15,20 +15,19 @@ services:
       HOST: "0.0.0.0"
       PORT: "3001"
       DATA_DIR: "/app/data"
-      STORAGE_DRIVER: "local"
       SOFFICE_PATH: "/usr/bin/soffice"
       NODE_EXTRA_CA_CERTS: "/app/certs/host-ca-bundle.crt"
-      # LegalAI development environment integration.
-      # Change LEGALAI_BASE_URL when deploying this compose file elsewhere.
-      TOKEN_SECRET: "4245afd2abbfdcdb4e960bcee70389902b47f1e0ca0d11fc992dc61ad4da293b"
-      LEGALAI_BASE_URL: "https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai"
+      # The signing secret and environment-specific backend address are loaded
+      # from the local .env file. Compose refuses to start if either is missing.
+      TOKEN_SECRET: "${TOKEN_SECRET:?TOKEN_SECRET is required}"
+      LEGALAI_BASE_URL: "${LEGALAI_BASE_URL:?LEGALAI_BASE_URL is required}"
       LEGALAI_CONTENT_PATH: "/zOffice/{docId}/content"
       LEGALAI_TOKEN_HEADER: "token"
       LEGALAI_REQUEST_TIMEOUT_MS: "30000"
       # Draft autosave remains enabled inside word-editor. This switch only
-      # controls periodic publication of the complete DOCX to LegalAI/S3.
+      # controls periodic publication of the complete DOCX to LegalAI.
       LEGALAI_AUTO_COMMIT_ENABLED: "false"
       LEGALAI_AUTO_COMMIT_INTERVAL_MS: "300000"
-      VERSION_HISTORY_ENABLED: "false"
+      VERSION_HISTORY_ENABLED: "${VERSION_HISTORY_ENABLED:-true}"
 
     restart: unless-stopped
