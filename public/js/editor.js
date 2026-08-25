@@ -127,8 +127,8 @@ export function scrollElementIntoEditorView(editor, target) {
 // insert new text) required a separate Ctrl+Z per step instead of undoing as
 // one. Track-changes call sites now pass the inputType real typing/deleting
 // would produce so they coalesce the same way normal edits do.
-function fireInput(editor, inputType = "") {
-  editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType }));
+function fireInput(editor, inputType = "", data = null) {
+  editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, data }));
 }
 function unwrapNode(node) {
   const parent = node.parentNode;
@@ -1260,7 +1260,90 @@ export function attachImageEditing(editor, page) {
 // ---------------------------------------------------------------
 export function createTrackChanges(editor, getAuthor) {
   let enabled = false;
+  let composing = false;
+  let compositionSession = null;
+  let compositionFinishTimer = null;
+  let deletionGroup = null;
+  const DELETION_GROUP_TIMEOUT = 1500;
+  const COMPOSITION_ANCHOR = "\u2060"; // invisible word joiner; removed after IME commit
   const now = () => String(Date.now());
+
+  function resetDeletionGroup() {
+    deletionGroup = null;
+  }
+
+  function meaningfulSibling(node, property) {
+    let sibling = node && node[property];
+    while (sibling && (
+      sibling.nodeType === Node.COMMENT_NODE
+      || (sibling.nodeType === Node.TEXT_NODE && sibling.data === "")
+    )) sibling = sibling[property];
+    return sibling;
+  }
+
+  function mergeContinuousDeletion(del, direction) {
+    const currentTime = Date.now();
+    const previous = deletionGroup;
+    const insertedBeforePrevious = previous
+      && meaningfulSibling(del, "nextSibling") === previous.node;
+    const insertedAfterPrevious = previous
+      && meaningfulSibling(previous.node, "nextSibling") === del;
+    const canMerge = previous
+      && currentTime - previous.updatedAt <= DELETION_GROUP_TIMEOUT
+      && previous.node.isConnected
+      && editor.contains(previous.node)
+      && previous.node.getAttribute("data-author") === del.getAttribute("data-author")
+      && (insertedBeforePrevious || insertedAfterPrevious);
+
+    let merged = del;
+    if (canMerge) {
+      const fragment = document.createDocumentFragment();
+      while (del.firstChild) fragment.appendChild(del.firstChild);
+      if (insertedBeforePrevious) previous.node.insertBefore(fragment, previous.node.firstChild);
+      else previous.node.appendChild(fragment);
+      del.remove();
+      merged = previous.node;
+    }
+    deletionGroup = { node: merged, direction, updatedAt: currentTime };
+    return merged;
+  }
+
+  function adjacentDeletionAtCaret(sel, direction) {
+    if (!sel.rangeCount || !sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0);
+    const container = range.startContainer;
+    const offset = range.startOffset;
+    let candidate = null;
+
+    if (container.nodeType === Node.ELEMENT_NODE) {
+      candidate = direction === "backward"
+        ? container.childNodes[offset - 1]
+        : container.childNodes[offset];
+      const property = direction === "backward" ? "previousSibling" : "nextSibling";
+      while (candidate && (
+        candidate.nodeType === Node.COMMENT_NODE
+        || (candidate.nodeType === Node.TEXT_NODE && candidate.data === "")
+      )) candidate = candidate[property];
+    } else if (container.nodeType === Node.TEXT_NODE) {
+      const atBoundary = direction === "backward" ? offset === 0 : offset === container.data.length;
+      if (!atBoundary) return null;
+      candidate = meaningfulSibling(container, direction === "backward" ? "previousSibling" : "nextSibling");
+    }
+
+    if (!candidate || candidate.nodeType !== Node.ELEMENT_NODE) return null;
+    return candidate.matches("del.tc-del") ? candidate : null;
+  }
+
+  function skipAdjacentDeletion(sel, direction) {
+    const del = adjacentDeletionAtCaret(sel, direction);
+    if (!del) return;
+    const range = document.createRange();
+    if (direction === "backward") range.setStartBefore(del);
+    else range.setStartAfter(del);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
 
   function makeWrapper(tag) {
     const n = document.createElement(tag);
@@ -1322,14 +1405,26 @@ export function createTrackChanges(editor, getAuthor) {
   function deleteTracked(direction, granularity = "character") {
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
-    if (sel.isCollapsed) {
+    const wasCollapsed = sel.isCollapsed;
+    if (!wasCollapsed) resetDeletionGroup();
+    if (wasCollapsed) {
+      // Tracked deletions remain in the DOM for review. When the user changes
+      // direction (Delete -> Backspace, or the reverse), Selection.modify()
+      // would otherwise select that already-deleted node again and nest a new
+      // <del> inside it. Step across the adjacent revision first so the next
+      // visible character is deleted and can join the same revision.
+      skipAdjacentDeletion(sel, direction);
       try { sel.modify("extend", direction, granularity); } catch {}
-      if (sel.isCollapsed) return; // document edge
+      if (sel.isCollapsed) {
+        resetDeletionGroup();
+        return; // document edge
+      }
     }
     const range = sel.getRangeAt(0);
     // selection entirely inside our own insertion: plain delete
     const insA = ownIns(range.startContainer), insB = ownIns(range.endContainer);
     if (insA && insA === insB) {
+      resetDeletionGroup();
       range.deleteContents();
       if (!insA.textContent && !insA.querySelector("img")) {
         const r = document.createRange();
@@ -1348,6 +1443,11 @@ export function createTrackChanges(editor, getAuthor) {
       const sub = clampToBlock(range, blocks[i]);
       const d = wrapRangeDel(sub);
       if (d) dels.unshift(d); // document order
+    }
+    if (wasCollapsed && blocks.length === 1 && dels.length === 1) {
+      dels[0] = mergeContinuousDeletion(dels[0], direction);
+    } else {
+      resetDeletionGroup();
     }
     sel.removeAllRanges();
     if (dels.length) {
@@ -1369,16 +1469,34 @@ export function createTrackChanges(editor, getAuthor) {
     sel.addRange(r);
   }
 
-  function insertTracked(text) {
+  function insertTracked(text, inputType = "insertText") {
+    if (text == null || text === "") return;
+    resetDeletionGroup();
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
-    if (!sel.isCollapsed) deleteTracked("forward");
+    if (!sel.isCollapsed) {
+      deleteTracked("forward");
+      resetDeletionGroup();
+    }
     const range = window.getSelection().getRangeAt(0);
+    const existingIns = ownIns(range.startContainer);
+    if (existingIns) {
+      const textNode = document.createTextNode(text);
+      range.insertNode(textNode);
+      const caret = document.createRange();
+      caret.setStartAfter(textNode);
+      caret.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(caret);
+      fireInput(editor, inputType, text);
+      scrollElementIntoEditorView(editor, existingIns);
+      return;
+    }
     const ins = makeWrapper("ins");
     ins.textContent = text;
     range.insertNode(ins);
     placeCaretInside(ins);
-    fireInput(editor, "insertText");
+    fireInput(editor, inputType, text);
     // A revision created off-screen (e.g. via the SDK, or at the end of a
     // long document) used to leave the viewport exactly where it was —
     // nothing ever scrolled to reveal the change that was just made.
@@ -1386,9 +1504,13 @@ export function createTrackChanges(editor, getAuthor) {
   }
 
   function insertTrackedHtml(html) {
+    resetDeletionGroup();
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
-    if (!sel.isCollapsed) deleteTracked("forward");
+    if (!sel.isCollapsed) {
+      deleteTracked("forward");
+      resetDeletionGroup();
+    }
     const tpl = document.createElement("template");
     tpl.innerHTML = html;
     const hasBlock = tpl.content.querySelector("p,div,h1,h2,h3,h4,h5,h6,ul,ol,table,blockquote,pre");
@@ -1435,21 +1557,53 @@ export function createTrackChanges(editor, getAuthor) {
   function onBeforeInput(e) {
     if (!enabled) return;
     const t = e.inputType;
-    if (t === "insertText") {
-      const sel = window.getSelection();
-      if (sel.isCollapsed && ownIns(sel.anchorNode)) return; // native typing extends own ins
+    const compositionMutation = t === "insertCompositionText" || t === "insertFromComposition"
+      || t === "insertText" || t === "insertReplacementText" || t === "deleteByComposition";
+
+    if (compositionSession && compositionMutation) {
+      if (t === "deleteByComposition" && compositionSession.selectionHandled && !compositionSession.hadInput) {
+        e.preventDefault();
+        return;
+      }
+      // A different ordinary keystroke after compositionend belongs to the
+      // next edit. Finalize the Chinese candidate before handling that input.
+      const data = e.data || "";
+      const finalText = compositionSession.committedText || compositionSession.lastData;
+      if (!composing && (t === "insertText" || t === "insertReplacementText") && data && data !== finalText) {
+        finishCompositionSession();
+      } else {
+        return; // native IME mutation; tracked after composition settles
+      }
+    } else if (compositionSession && !composing) {
+      finishCompositionSession();
+    }
+
+    if (t === "insertText" || t === "insertReplacementText") {
       e.preventDefault();
-      insertTracked(e.data || "");
+      insertTracked(e.data || "", t);
+    } else if (t === "insertCompositionText" || t === "insertFromComposition") {
+      resetDeletionGroup();
+      beginCompositionSession();
     } else if (t === "deleteContentBackward" || t === "deleteWordBackward") {
       const sel = window.getSelection();
-      if (sel.isCollapsed && strictlyInsideOwnIns(sel, "start")) return; // native delete of own insertion
+      if (sel.isCollapsed && strictlyInsideOwnIns(sel, "start")) {
+        resetDeletionGroup();
+        return; // native delete of own insertion
+      }
       e.preventDefault();
       deleteTracked("backward", t.includes("Word") ? "word" : "character");
     } else if (t === "deleteContentForward" || t === "deleteWordForward") {
       const sel = window.getSelection();
-      if (sel.isCollapsed && strictlyInsideOwnIns(sel, "end")) return;
+      if (sel.isCollapsed && strictlyInsideOwnIns(sel, "end")) {
+        resetDeletionGroup();
+        return;
+      }
       e.preventDefault();
       deleteTracked("forward", t.includes("Word") ? "word" : "character");
+    } else if (t === "deleteByComposition") {
+      resetDeletionGroup();
+      if (!compositionSession) beginCompositionSession();
+      if (compositionSession && compositionSession.selectionHandled && !compositionSession.hadInput) e.preventDefault();
     } else if (t === "insertFromDrop") {
       e.preventDefault();
       const dt = e.dataTransfer;
@@ -1457,14 +1611,171 @@ export function createTrackChanges(editor, getAuthor) {
       const text = dt && dt.getData("text/plain");
       if (html) insertTrackedHtml(sanitizeHtml(html));
       else if (text) insertTracked(text);
+    } else {
+      resetDeletionGroup();
     }
-    // insertParagraph, IME composition, formatting commands: native behavior
+    // insertParagraph and formatting commands keep native behavior.
   }
   editor.addEventListener("beforeinput", onBeforeInput);
+
+  function beginCompositionSession() {
+    if (!enabled || compositionSession) return;
+    resetDeletionGroup();
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !editor.contains(sel.anchorNode)) return;
+    const selectionHandled = !sel.isCollapsed;
+    if (selectionHandled) {
+      deleteTracked("forward");
+      resetDeletionGroup();
+    }
+    const activeSel = window.getSelection();
+    if (!activeSel.rangeCount) return;
+    // A collapsed range immediately after <del> can have backward DOM
+    // affinity, causing native IME text to be inserted inside the deletion.
+    // A real (but invisible) character prevents the caret from acquiring the
+    // preceding <del>'s backward style affinity while the user types pinyin.
+    const anchor = document.createTextNode(COMPOSITION_ANCHOR);
+    const caretRange = activeSel.getRangeAt(0);
+    caretRange.insertNode(anchor);
+    const anchoredCaret = document.createRange();
+    anchoredCaret.setStart(anchor, anchor.length);
+    anchoredCaret.collapse(true);
+    activeSel.removeAllRanges();
+    activeSel.addRange(anchoredCaret);
+    compositionSession = {
+      selectionHandled,
+      anchor,
+      hadInput: false,
+      lastData: "",
+      committedText: "",
+      ended: false,
+    };
+  }
+
+  function textPointAt(root, offset, preferNext = false) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node;
+    let remaining = offset;
+    let boundary = null;
+    while ((node = walker.nextNode())) {
+      if (remaining < node.data.length) return { node, offset: remaining };
+      if (remaining === node.data.length) {
+        boundary = { node, offset: remaining };
+        if (!preferNext) return boundary;
+        remaining = 0;
+        continue;
+      }
+      remaining -= node.data.length;
+    }
+    return boundary;
+  }
+
+  function rangeForCommittedText(text) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !editor.contains(sel.anchorNode)) return null;
+    const liveRange = sel.getRangeAt(0);
+    if (!liveRange.collapsed && liveRange.toString() === text) return liveRange.cloneRange();
+    const caret = liveRange.cloneRange();
+    caret.collapse(false);
+    const root = closestBlock(caret.startContainer, editor) || editor;
+    const beforeRange = document.createRange();
+    beforeRange.selectNodeContents(root);
+    try { beforeRange.setEnd(caret.startContainer, caret.startOffset); } catch { return null; }
+    const before = beforeRange.toString();
+    const startOffset = before.lastIndexOf(text);
+    if (startOffset < 0) return null;
+    // The committed candidate must be at, or immediately before, the caret.
+    // A small trailing allowance covers engines that insert a temporary NBSP.
+    if (before.length - startOffset - text.length > 1) return null;
+    const start = textPointAt(root, startOffset, true);
+    const end = textPointAt(root, startOffset + text.length);
+    if (!start || !end) return null;
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    return range.toString() === text ? range : null;
+  }
+
+  function removeCompositionAnchor(session) {
+    const anchor = session && session.anchor;
+    if (!anchor || !anchor.isConnected) return;
+    const index = anchor.data.indexOf(COMPOSITION_ANCHOR);
+    if (index >= 0) anchor.deleteData(index, COMPOSITION_ANCHOR.length);
+    if (!anchor.data) anchor.remove();
+  }
+
+  function finishCompositionSession() {
+    clearTimeout(compositionFinishTimer);
+    compositionFinishTimer = null;
+    const session = compositionSession;
+    if (!session) return;
+    compositionSession = null;
+    const text = session.committedText || session.lastData;
+    if (!text) {
+      removeCompositionAnchor(session);
+      return;
+    }
+    const range = rangeForCommittedText(text);
+    if (!range) {
+      removeCompositionAnchor(session);
+      return;
+    }
+    const existingIns = ownIns(range.startContainer);
+    if (existingIns && existingIns === ownIns(range.endContainer)) {
+      removeCompositionAnchor(session);
+      return;
+    }
+    const startElement = range.startContainer.nodeType === 3
+      ? range.startContainer.parentElement : range.startContainer;
+    const deletion = startElement && startElement.closest
+      ? startElement.closest("del.tc-del") : null;
+    const ins = makeWrapper("ins");
+    ins.appendChild(range.extractContents());
+    // Defensive fallback for IMEs that ignore the neutral anchor and still
+    // place the committed text inside <del>. Hoist the insertion beside the
+    // deletion so the ancestor's line-through cannot cross the green text.
+    if (deletion && editor.contains(deletion)) deletion.after(ins);
+    else range.insertNode(ins);
+    for (const nestedDel of [...ins.querySelectorAll("del.tc-del")]) unwrapNode(nestedDel);
+    removeCompositionAnchor(session);
+    placeCaretInside(ins);
+    fireInput(editor, "insertCompositionText", text);
+    scrollElementIntoEditorView(editor, ins);
+  }
+
+  function scheduleCompositionFinish(delay = 60) {
+    clearTimeout(compositionFinishTimer);
+    compositionFinishTimer = setTimeout(finishCompositionSession, delay);
+  }
+
+  editor.addEventListener("compositionstart", () => {
+    if (!enabled) return;
+    if (compositionSession && compositionSession.ended) finishCompositionSession();
+    composing = true;
+    beginCompositionSession();
+  });
+
+  editor.addEventListener("compositionend", (e) => {
+    composing = false;
+    if (!compositionSession) beginCompositionSession();
+    if (compositionSession) {
+      compositionSession.committedText = e.data || compositionSession.lastData;
+      compositionSession.ended = true;
+    }
+    scheduleCompositionFinish();
+  });
+
+  editor.addEventListener("input", (e) => {
+    if (!compositionSession) return;
+    compositionSession.hadInput = true;
+    if (composing && e.data) compositionSession.lastData = e.data;
+    if (!composing) scheduleCompositionFinish();
+  });
 
   // cut while tracking: copy manually, then mark deleted
   editor.addEventListener("cut", (e) => {
     if (!enabled) return;
+    resetDeletionGroup();
     const sel = window.getSelection();
     if (!sel.rangeCount || sel.isCollapsed) return;
     e.preventDefault();
@@ -1479,31 +1790,39 @@ export function createTrackChanges(editor, getAuthor) {
 
   function accept(node) {
     if (!node) return;
+    resetDeletionGroup();
     if (node.matches && node.matches("ins.tc-ins")) unwrapNode(node);
     else node.remove();
     fireInput(editor);
   }
   function reject(node) {
     if (!node) return;
+    resetDeletionGroup();
     if (node.matches && node.matches("ins.tc-ins")) node.remove();
     else unwrapNode(node);
     fireInput(editor);
   }
 
   return {
-    setEnabled(v) { enabled = !!v; },
+    setEnabled(v) {
+      if (!v && compositionSession) finishCompositionSession();
+      resetDeletionGroup();
+      enabled = !!v;
+    },
     isEnabled() { return enabled; },
     insertText: insertTracked,
     insertHtml: insertTrackedHtml,
     accept,
     reject,
     acceptAll() {
+      resetDeletionGroup();
       for (const n of [...editor.querySelectorAll("ins.tc-ins, del.tc-del")]) {
         n.tagName === "INS" ? unwrapNode(n) : n.remove();
       }
       fireInput(editor);
     },
     rejectAll() {
+      resetDeletionGroup();
       for (const n of [...editor.querySelectorAll("ins.tc-ins, del.tc-del")]) {
         n.tagName === "INS" ? n.remove() : unwrapNode(n);
       }
