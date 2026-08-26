@@ -105,7 +105,7 @@ docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word
     mode: "edit",            // "edit" | "view"
     toolbar: true, statusbar: true,
     user: "Alice",           // presence name
-    onReady(i) {}, onChange(i) {}, onSave(i) {}, onPresence(p) {}, onError(e) {},
+    onReady(i) {}, onDocument(i) {}, onChange(i) {}, onSave(i) {}, onPresence(p) {}, onError(e) {},
   });
   await ed.getContent(); await ed.setContent(html);
   await ed.insertText(t); await ed.insertHtml(h); await ed.getText();
@@ -116,6 +116,7 @@ docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word
 ```
 
 - Live demo: open `/embed-example.html`
+- Full-screen persistent demo: open `/fullscreen-test.html` (the last opened document is restored after refresh; `?doc=<id>` selects the initial document)
 - Direct iframe embedding via URL flags: `/?embed=1&doc=<id>&mode=view&toolbar=0&statusbar=0&user=Bob`
 
 **Server**

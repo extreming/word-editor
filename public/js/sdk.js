@@ -13,6 +13,7 @@
  *       statusbar: true,
  *       user: "Alice",                       // presence name
  *       onReady(info)   {},
+ *       onDocument(info){},                    // current document was opened/switched
  *       onChange(info)  {},
  *       onSave(info)    {},
  *       onPresence(p)   {},
@@ -113,7 +114,8 @@
       }
       if (m.event) {
         const handler = {
-          ready: opts.onReady, change: opts.onChange, save: opts.onSave,
+          ready: opts.onReady, document: opts.onDocument,
+          change: opts.onChange, save: opts.onSave,
           presence: opts.onPresence, error: opts.onError,
         }[m.event];
         if (handler) try { handler(m.data); } catch (e) { console.error(e); }

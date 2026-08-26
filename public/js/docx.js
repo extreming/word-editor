@@ -626,6 +626,17 @@ function tableToHtml(tbl, ctx) {
       if (c.rowspan > 1) attrs.push(`rowspan="${c.rowspan}"`);
       const st = [];
       if (c.shd) st.push("background-color:" + c.shd);
+      // Word's `w:color w:val="auto"` adapts to the current background.
+      // Browsers do not: an omitted CSS color inherits the editor's dark ink,
+      // which makes automatic text almost invisible in dark shaded cells.
+      // Set a readable inherited foreground for dark fills; an explicit run
+      // color remains on its child span and therefore still wins.
+      if (c.shd && /^#[0-9a-f]{6}$/i.test(c.shd)) {
+        const rgb = [1, 3, 5].map((i) => parseInt(c.shd.slice(i, i + 2), 16) / 255);
+        const linear = rgb.map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+        const luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+        if (luminance < 0.18) st.push("color:#ffffff");
+      }
       if (c.widthCss) st.push("width:" + c.widthCss);
       if (st.length) attrs.push(`style="${st.join(";")}"`);
       html += `<td ${attrs.join(" ")}>${c.inner}</td>`;
@@ -645,82 +656,111 @@ function renderParagraph(p, ctx) {
   return html;
 }
 
-// A header/footer part (word/header1.xml, word/footer1.xml, …) has the same
-// paragraph/run structure as document.xml, just rooted at w:hdr/w:ftr instead
-// of w:body. The app's on-screen "chrome" model only understands a single
-// plain-text line + alignment + a yes/no page-number field, so this is a
-// deliberately lossy reduction — rich formatting, multiple paragraphs, tables
-// or images inside a real Word header/footer don't survive the round trip.
-// A PAGE field (either the simple w:fldSimple form or the begin/instrText/
-// separate/end complex form) is detected and reported separately from the
-// text, and its own cached numeric result is skipped, since the app
-// regenerates a live field on export rather than baking in a static number.
-function paragraphTextExcludingFields(p) {
-  let text = "";
+// Extract visible header/footer content while retaining PAGE/NUMPAGES positions.
+// Complex fields cache their last result between `separate` and `end`; that
+// cached number is skipped and represented by a live placeholder instead.
+function headerFooterParagraph(p) {
+  let template = "", currentField = null, inFieldResult = false;
   let hasPageField = false, hasNumPagesField = false, fieldSwitch = null;
-  let inFieldResult = false; // between fldChar separate and end: cached value, skip it
-  const checkInstr = (instr) => {
+  const fieldToken = (instr) => {
+    if (/\bNUMPAGES\b/i.test(instr)) {
+      hasNumPagesField = true;
+      return "{{NUMPAGES}}";
+    }
     if (/\bPAGE\b/i.test(instr)) {
       hasPageField = true;
       if (/\\\*\s*roman/i.test(instr)) fieldSwitch = "roman";
       else if (/\\\*\s*alphabetic/i.test(instr)) fieldSwitch = "alpha";
+      return "{{PAGE}}";
     }
-    if (/\bNUMPAGES\b/i.test(instr)) hasNumPagesField = true;
+    return "";
   };
-  for (const r of children(p, W, "r")) {
-    const fldChar = child(r, W, "fldChar");
-    if (fldChar) {
-      const type = attr(fldChar, "fldCharType");
-      if (type === "separate") inFieldResult = true;
-      else if (type === "end") inFieldResult = false;
+  const emitCurrentField = () => {
+    if (!currentField || currentField.emitted) return;
+    template += fieldToken(currentField.instr);
+    currentField.emitted = true;
+  };
+  for (const node of p.children) {
+    if (node.namespaceURI !== W) continue;
+    if (node.localName === "fldSimple") {
+      template += fieldToken(attr(node, "instr") || "");
       continue;
     }
-    const instrEl = child(r, W, "instrText");
-    if (instrEl) {
-      checkInstr(instrEl.textContent);
-      continue; // field instruction code, never part of the visible label
+    if (node.localName !== "r") continue;
+    const fldChar = child(node, W, "fldChar");
+    if (fldChar) {
+      const type = attr(fldChar, "fldCharType");
+      if (type === "begin") { currentField = { instr: "", emitted: false }; inFieldResult = false; }
+      else if (type === "separate") { emitCurrentField(); inFieldResult = true; }
+      else if (type === "end") { emitCurrentField(); currentField = null; inFieldResult = false; }
+      continue;
     }
-    if (inFieldResult) continue; // cached field result, regenerated live on export instead
-    for (const t of children(r, W, "t")) text += t.textContent;
-    if (child(r, W, "tab")) text += "\t";
+    const instrEl = child(node, W, "instrText");
+    if (instrEl) {
+      if (!currentField) currentField = { instr: "", emitted: false };
+      currentField.instr += instrEl.textContent;
+      continue;
+    }
+    if (inFieldResult) continue;
+    for (const t of children(node, W, "t")) template += t.textContent;
+    if (child(node, W, "tab")) template += "\t";
+    if (child(node, W, "br")) template += "\n";
   }
-  for (const fs of children(p, W, "fldSimple")) checkInstr(attr(fs, "instr") || "");
-  return { text, hasPageField, hasNumPagesField, fieldSwitch };
+  emitCurrentField();
+  return { template, hasPageField, hasNumPagesField, fieldSwitch };
 }
-// A header/footer part built by this app's own export puts the free-text
-// label and the page-number field in separate paragraphs (see
-// headerFooterPartXml) — a paragraph containing a page field is field-only
-// bookkeeping, not part of the label, so it's classified and excluded from
-// `text` rather than concatenated into it. A real Word document that puts
-// both on the same line (its usual three-zone layout) will have its literal
-// "Page "/" of " prose folded into `text` in that case, since there's no
-// separate paragraph to tell them apart — an accepted simplification given
-// the app's chrome model doesn't support a mixed text+field single line.
+
+function appendChromeZone(zones, align, value) {
+  const text = (value || "").trim();
+  if (!text) return;
+  zones[align] = zones[align] ? zones[align] + "\n" + text : text;
+}
+
 function parseHeaderFooterPart(xmlText) {
   if (!xmlText) return null;
   let doc;
   try { doc = parseXml(xmlText); } catch { return null; }
   const root = doc.documentElement;
-  let text = "", textAlign = "left";
+  const zones = { left: "", center: "", right: "" };
   let hasPageField = false, pageFormat = "arabic", pageAlign = "left";
   for (const p of children(root, W, "p")) {
     const info = paragraphStyleInfo(p, {});
     const alignStyle = info.styles.find((s) => s.startsWith("text-align:"));
     const align = alignStyle ? alignStyle.split(":")[1] : "left";
-    const seg = paragraphTextExcludingFields(p);
+    const seg = headerFooterParagraph(p);
     if (seg.hasPageField) {
       hasPageField = true;
-      pageAlign = align;
+      const pageAt = seg.template.indexOf("{{PAGE}}");
+      const beforePage = pageAt >= 0 ? seg.template.slice(0, pageAt) : seg.template;
+      const tabParts = beforePage.split("\t");
+      // Word commonly lays out footer zones with tab stops: text before the
+      // first tab is left, PAGE after one tab is centered, after two is right.
+      pageAlign = tabParts.length > 2 ? "right" : tabParts.length > 1 ? "center" : align;
+      for (let i = 0; i < tabParts.length - 1; i++) {
+        appendChromeZone(zones, i === 0 ? "left" : "center", tabParts[i]);
+      }
+      const pageCellText = (tabParts[tabParts.length - 1] || "").replace(/\bPage\s*$/i, "");
+      appendChromeZone(zones, pageAlign, pageCellText);
       if (seg.hasNumPagesField) pageFormat = "pageOfN";
       else if (seg.fieldSwitch) pageFormat = seg.fieldSwitch;
-      else if (seg.text.trim()) pageFormat = "page"; // literal "Page " prefix, bare field otherwise
+      else if (/\bPage\s*$/i.test(tabParts[tabParts.length - 1] || "")) pageFormat = "page";
       else pageFormat = "arabic";
+
+      // Text after NUMPAGES/PAGE is usually either part of the number label or
+      // a right-aligned footer label padded with tabs/spaces. Keep the latter.
+      const lastToken = seg.hasNumPagesField ? "{{NUMPAGES}}" : "{{PAGE}}";
+      const tokenAt = seg.template.lastIndexOf(lastToken);
+      const afterField = tokenAt >= 0 ? seg.template.slice(tokenAt + lastToken.length) : "";
+      const rightMatch = afterField.match(/(?:\t|\s{3,})(\S(?:[\s\S]*?\S)?)\s*$/);
+      if (rightMatch) appendChromeZone(zones, "right", rightMatch[1]);
       continue;
     }
-    const t = seg.text.trim();
-    if (t) { text += (text ? " " : "") + t; textAlign = align; }
+    appendChromeZone(zones, align, seg.template);
   }
-  return { text: text.trim(), align: textAlign, hasPageField, pageFormat, pageAlign };
+  const populated = Object.entries(zones).filter(([, value]) => value);
+  const align = populated.length === 1 ? populated[0][0] : "left";
+  const text = populated.length === 1 ? populated[0][1] : "";
+  return { text, align, zones, hasPageField, pageFormat, pageAlign };
 }
 function headerFooterRefs(sectPr) {
   const refs = { header: null, footer: null };
@@ -776,12 +816,12 @@ function parseSectPr(sectPr, ctx) {
     const chrome = {};
     if (refs.header) {
       const part = parseHeaderFooterPart(resolveRelTarget(ctx, refs.header));
-      if (part && part.text) chrome.header = { text: part.text, align: part.align };
+      if (part && Object.values(part.zones).some(Boolean)) chrome.header = { text: part.text, align: part.align, zones: part.zones };
       if (part && part.hasPageField) chrome.pageNumber = { enabled: true, format: part.pageFormat, place: `header-${part.pageAlign}` };
     }
     if (refs.footer) {
       const part = parseHeaderFooterPart(resolveRelTarget(ctx, refs.footer));
-      if (part && part.text) chrome.footer = { text: part.text, align: part.align };
+      if (part && Object.values(part.zones).some(Boolean)) chrome.footer = { text: part.text, align: part.align, zones: part.zones };
       if (part && part.hasPageField) chrome.pageNumber = { enabled: true, format: part.pageFormat, place: `footer-${part.pageAlign}` };
     }
     if (Object.keys(chrome).length) setup.chrome = chrome;
@@ -1494,20 +1534,34 @@ function pageNumberFieldXml(format) {
 function jcXml(align) {
   return align === "center" ? '<w:jc w:val="center"/>' : align === "right" ? '<w:jc w:val="right"/>' : "";
 }
-// Builds a word/header*.xml or word/footer*.xml part. The app's chrome model
-// keeps header/footer text and the page-number field as independent pieces
-// (each with its own alignment) rather than Word's single three-zone
-// left/center/right line, so — deliberate simplification — they're emitted
-// as separate paragraphs rather than one tab-stopped line; both pieces of
-// information survive the round trip, just on their own lines instead of
-// sharing one.
+function headerFooterTextXml(text) {
+  return String(text || "").split("\n").map((line, index) =>
+    `${index ? "<w:r><w:br/></w:r>" : ""}<w:r><w:t xml:space="preserve">${escXml(line)}</w:t></w:r>`
+  ).join("");
+}
+// Emit the same left / center / right chrome model used on screen. Tab stops
+// keep mixed footer labels and page-number fields on one line in Word, while
+// embedded line breaks preserve multi-line headers.
 function headerFooterPartXml(rootTag, textEntry, pageNumberEntry) {
   const paras = [];
-  if (textEntry && textEntry.text) {
-    paras.push(`<w:p><w:pPr>${jcXml(textEntry.align)}</w:pPr><w:r><w:t xml:space="preserve">${escXml(textEntry.text)}</w:t></w:r></w:p>`);
-  }
-  if (pageNumberEntry) {
-    paras.push(`<w:p><w:pPr>${jcXml(pageNumberEntry.align)}</w:pPr>${pageNumberFieldXml(pageNumberEntry.format)}</w:p>`);
+  const zones = textEntry && textEntry.zones
+    ? { left: textEntry.zones.left || "", center: textEntry.zones.center || "", right: textEntry.zones.right || "" }
+    : { left: "", center: "", right: "" };
+  if (textEntry && textEntry.text && !Object.values(zones).some(Boolean)) zones[textEntry.align || "center"] = textEntry.text;
+  if (pageNumberEntry || Object.values(zones).filter(Boolean).length > 1) {
+    const contents = {};
+    for (const align of ["left", "center", "right"]) {
+      contents[align] = headerFooterTextXml(zones[align]);
+      if (pageNumberEntry && pageNumberEntry.align === align) {
+        if (contents[align]) contents[align] += '<w:r><w:t xml:space="preserve">  </w:t></w:r>';
+        contents[align] += pageNumberFieldXml(pageNumberEntry.format);
+      }
+    }
+    const tabs = '<w:tabs><w:tab w:val="center" w:pos="4680"/><w:tab w:val="right" w:pos="9360"/></w:tabs>';
+    paras.push(`<w:p><w:pPr>${tabs}</w:pPr>${contents.left}<w:r><w:tab/></w:r>${contents.center}<w:r><w:tab/></w:r>${contents.right}</w:p>`);
+  } else if (textEntry && (textEntry.text || Object.values(zones).some(Boolean))) {
+    const align = Object.keys(zones).find((key) => zones[key]) || textEntry.align || "left";
+    paras.push(`<w:p><w:pPr>${jcXml(align)}</w:pPr>${headerFooterTextXml(zones[align] || textEntry.text)}</w:p>`);
   }
   if (!paras.length) paras.push("<w:p/>");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:${rootTag} xmlns:w="${W}">${paras.join("")}</w:${rootTag}>`;

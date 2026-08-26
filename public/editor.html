@@ -70,11 +70,17 @@
 
     <main id="editor-wrap">
       <div id="library" class="panel hidden">
-        <h3 data-i18n="library.title">Saved documents</h3>
+        <div class="panel-header">
+          <h3 data-i18n="library.title">Saved documents</h3>
+          <button type="button" class="panel-close" data-close-panel="library" title="Close" data-i18n-title="dlg.close" aria-label="Close">×</button>
+        </div>
         <ul id="library-items"></ul>
       </div>
       <div id="history" class="panel hidden">
-        <h3 data-i18n="history.title">Version history</h3>
+        <div class="panel-header">
+          <h3 data-i18n="history.title">Version history</h3>
+          <button type="button" class="panel-close" data-close-panel="history" title="Close" data-i18n-title="dlg.close" aria-label="Close">×</button>
+        </div>
         <ul id="history-items"></ul>
       </div>
       <div id="page-outer">
@@ -84,11 +90,17 @@
       </div>
       <div id="pdf-view" class="hidden"></div>
       <div id="comments-panel" class="panel panel-right hidden">
-        <h3 data-i18n="menu.comments">Comments</h3>
+        <div class="panel-header">
+          <h3 data-i18n="menu.comments">Comments</h3>
+          <button type="button" class="panel-close" data-close-panel="comments-panel" title="Close" data-i18n-title="dlg.close" aria-label="Close">×</button>
+        </div>
         <ul id="comments-items"></ul>
       </div>
       <div id="review-panel" class="panel panel-right hidden">
-        <h3 data-i18n="review.title">Review — track changes</h3>
+        <div class="panel-header">
+          <h3 data-i18n="review.title">Review — track changes</h3>
+          <button type="button" class="panel-close" data-close-panel="review-panel" title="Close" data-i18n-title="dlg.close" aria-label="Close">×</button>
+        </div>
         <label class="review-toggle"><input type="checkbox" id="track-toggle" /> <span data-i18n="review.trackToggleLabel">Track changes (Ctrl+Shift+E)</span></label>
         <div class="review-actions">
           <button id="btn-accept-all" data-i18n="review.acceptAll">Accept all</button>

@@ -342,17 +342,17 @@ body.pdf-dragging .pdf-ann * { pointer-events: none; }
 
 /* ---------- header / footer / page-number bands ---------- */
 .pg-chrome {
-  position: absolute; z-index: 6; display: flex;
+  position: absolute; z-index: 6; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
   font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #444;
 }
-.pg-chrome .pg-cell { flex: 1; overflow: hidden; white-space: nowrap; cursor: default; }
+.pg-chrome .pg-cell { min-width: 0; overflow: visible; white-space: pre-line; line-height: 1.2; cursor: default; }
 .pg-chrome .pg-cell[contenteditable="true"] {
   overflow: visible; white-space: normal; cursor: text;
   outline: 1px dashed var(--accent); background: rgba(43, 87, 154, 0.06);
 }
-.pg-chrome .pg-left { text-align: left; }
-.pg-chrome .pg-center { text-align: center; }
-.pg-chrome .pg-right { text-align: right; }
+.pg-chrome .pg-left { grid-column: 1; grid-row: 1; z-index: 1; text-align: left; }
+.pg-chrome .pg-center { grid-column: 1 / -1; grid-row: 1; text-align: center; }
+.pg-chrome .pg-right { grid-column: 3; grid-row: 1; z-index: 1; text-align: right; }
 
 /* ---------- rulers ---------- */
 /* Both rulers are absolutely positioned INSIDE #page, hugging the content-area
@@ -557,7 +557,14 @@ mark.find-hit.current { background: #ff9632; color: #fff; }
 
 /* ---------- side panels ---------- */
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; width: 300px; flex: none; align-self: flex-start; max-height: calc(100vh - 200px); overflow: auto; }
-.panel h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+.panel-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.panel-header h3 { flex: 1; min-width: 0; margin: 0; font-size: 13px; color: var(--muted); }
+.panel-close {
+  flex: none; width: 26px; height: 26px; padding: 0; border: none;
+  border-radius: 5px; background: transparent; color: var(--muted);
+  font-size: 20px; line-height: 1; cursor: pointer;
+}
+.panel-close:hover { background: #eef1f6; color: var(--ink); }
 .panel ul { list-style: none; padding: 0; margin: 0; }
 .panel li.muted { color: var(--muted); font-size: 12px; }
 .panel-right { width: 320px; }

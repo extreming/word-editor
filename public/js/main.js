@@ -311,6 +311,17 @@ async function main() {
   }
   window.addEventListener("resize", schedulePaginate);
   editor.addEventListener("load", schedulePaginate, true); // images finishing load
+  // Side panels are flex siblings of the paper. Opening or closing one can
+  // change #page's actual width without firing window.resize; text then
+  // reflows while the old pagination spacers remain in place. Observe the
+  // paper itself so visual sheets and content always use the same geometry.
+  if (typeof ResizeObserver !== "undefined") {
+    const pageResizeObserver = new ResizeObserver(() => {
+      const width = $("page").clientWidth;
+      if (Math.abs(width - pageMetrics.pageWidth) > 0.5) schedulePaginate();
+    });
+    pageResizeObserver.observe($("page"));
+  }
 
   // ---- headers / footers / page numbers (rendered per simulated sheet) ----
   function toRoman(n) {
@@ -339,8 +350,9 @@ async function main() {
     page.querySelectorAll(".pg-chrome").forEach((e) => e.remove());
     const ch = (current.pageSetup && current.pageSetup.chrome) || {};
     const met = pageMetrics;
-    const hasHeader = ch.header && ch.header.text;
-    const hasFooter = ch.footer && ch.footer.text;
+    const hasChromeText = (def) => def && (def.text || (def.zones && Object.values(def.zones).some(Boolean)));
+    const hasHeader = hasChromeText(ch.header);
+    const hasFooter = hasChromeText(ch.footer);
     const pn = ch.pageNumber && ch.pageNumber.enabled ? ch.pageNumber : null;
     if (!hasHeader && !hasFooter && !pn) return;
 
@@ -357,16 +369,21 @@ async function main() {
         if (def && def.align) band.setAttribute("data-align", def.align);
         const cells = { left: document.createElement("span"), center: document.createElement("span"), right: document.createElement("span") };
         for (const [k2, c] of Object.entries(cells)) { c.className = "pg-cell pg-" + k2; c.contentEditable = "false"; band.appendChild(c); }
-        if (def && def.text) cells[def.align || "center"].textContent = def.text;
+        if (def && def.zones) {
+          for (const [align, value] of Object.entries(def.zones)) {
+            if (cells[align] && value) cells[align].textContent = value;
+          }
+        } else if (def && def.text) cells[def.align || "center"].textContent = def.text;
         if (pn && pn.place && pn.place.startsWith(place)) {
           const where = pn.place.split("-")[1] || "center";
           const t = pageNumText(k, met.count, pn.format);
           cells[where].textContent = (cells[where].textContent ? cells[where].textContent + "  " : "") + t;
         }
         // double-click to edit text inline
-        band.addEventListener("dblclick", () => {
-          const align = band.getAttribute("data-align") || "center";
-          const cell = band.querySelector(`.pg-cell.pg-${align}`);
+        band.addEventListener("dblclick", (event) => {
+          const clicked = event.target.closest(".pg-cell");
+          const align = clicked ? clicked.className.match(/pg-(left|center|right)/)?.[1] : (band.getAttribute("data-align") || "center");
+          const cell = clicked || band.querySelector(`.pg-cell.pg-${align}`);
           if (!cell) return;
           cell.contentEditable = "true";
           cell.focus();
@@ -379,13 +396,20 @@ async function main() {
             if (cell.contentEditable !== "true") return;
             cell.contentEditable = "false";
             const text = cell.textContent.replace(/\s+/g, " ").trim();
-            const orig = def && def.text ? def.text : "";
+            const orig = def && def.zones ? (def.zones[align] || "") : (def && def.text ? def.text : "");
             if (text && text !== orig) {
               const s = current.pageSetup || (current.pageSetup = {});
               const ct = s.chrome || (s.chrome = {});
               ct[type] = ct[type] || {};
-              ct[type].text = text;
-              ct[type].align = align;
+              if (def && def.zones) {
+                ct[type].zones = { ...def.zones, [align]: text };
+                const populated = Object.entries(ct[type].zones).filter(([, value]) => value);
+                ct[type].text = populated.length === 1 ? populated[0][1] : "";
+                ct[type].align = populated.length === 1 ? populated[0][0] : "left";
+              } else {
+                ct[type].text = text;
+                ct[type].align = align;
+              }
               scheduleSave();
               schedulePaginate();
             }
@@ -624,6 +648,14 @@ async function main() {
     }
   };
 
+  function emitDocumentOpened() {
+    emitToHost("document", {
+      id: current.id,
+      title: titleInput.value || current.title,
+      rev: autosaver.rev,
+    });
+  }
+
   const track = createTrackChanges(editor, () => userName);
 
   const autosaver = new Autosaver(null, 1200, setStatus,
@@ -854,8 +886,7 @@ async function main() {
     }
   }
   function openCommentsPanel(focusCid) {
-    closePanels("comments-panel");
-    commentsPanel.classList.remove("hidden");
+    openPanel("comments-panel");
     renderComments(focusCid);
     if (focusCid) jumpToComment(focusCid);
   }
@@ -946,8 +977,7 @@ async function main() {
     }
   }
   function openReviewPanel() {
-    closePanels("review-panel");
-    reviewPanel.classList.remove("hidden");
+    openPanel("review-panel");
     syncTrackUI();
     renderReview();
   }
@@ -974,10 +1004,32 @@ async function main() {
   // Panels bookkeeping
   // ---------------------------------------------------------------
   const PANELS = ["library", "history", "comments-panel", "review-panel"];
+  function closePanel(id) {
+    const panel = $(id);
+    if (!panel || panel.classList.contains("hidden")) return;
+    panel.classList.add("hidden");
+    schedulePaginate();
+  }
   function closePanels(except) {
+    let changed = false;
     for (const id of PANELS) {
-      if (id !== except) $(id).classList.add("hidden");
+      if (id !== except && !$(id).classList.contains("hidden")) {
+        $(id).classList.add("hidden");
+        changed = true;
+      }
     }
+    if (changed) schedulePaginate();
+  }
+  function openPanel(id) {
+    closePanels(id);
+    const panel = $(id);
+    if (panel.classList.contains("hidden")) {
+      panel.classList.remove("hidden");
+      schedulePaginate();
+    }
+  }
+  for (const button of document.querySelectorAll("[data-close-panel]")) {
+    button.addEventListener("click", () => closePanel(button.dataset.closePanel));
   }
 
   // ---- toolbar / behaviors ----
@@ -1035,6 +1087,7 @@ async function main() {
     sync.join(meta.id);
     setStatus("ready");
     if (!embedded) localStorage.setItem(LS_KEY, meta.id);
+    emitDocumentOpened();
     return true;
   }
 
@@ -1175,6 +1228,7 @@ async function main() {
       }
       if (!embedded) localStorage.setItem(LS_KEY, seeded.id);
       sync.join(seeded.id);
+      emitDocumentOpened();
       setStatus("saved");
     } catch (e) {
       console.error(e);
@@ -1383,9 +1437,8 @@ async function main() {
   const library = $("library");
   const libraryItems = $("library-items");
   $("btn-list").addEventListener("click", async () => {
-    if (!library.classList.contains("hidden")) { library.classList.add("hidden"); return; }
-    closePanels("library");
-    library.classList.remove("hidden");
+    if (!library.classList.contains("hidden")) { closePanel("library"); return; }
+    openPanel("library");
     await renderLibrary();
   });
   async function renderLibrary() {
@@ -1434,9 +1487,8 @@ async function main() {
   const history = $("history");
   const historyItems = $("history-items");
   $("btn-history").addEventListener("click", async () => {
-    if (!history.classList.contains("hidden")) { history.classList.add("hidden"); return; }
-    closePanels("history");
-    history.classList.remove("hidden");
+    if (!history.classList.contains("hidden")) { closePanel("history"); return; }
+    openPanel("history");
     await renderHistory();
   });
   async function renderHistory() {
@@ -1467,7 +1519,7 @@ async function main() {
         docComments = doc.comments || [];
         renderComments();
         setStatus("saved");
-        history.classList.add("hidden");
+        closePanel("history");
       });
       li.appendChild(info);
       historyItems.appendChild(li);
@@ -1476,11 +1528,11 @@ async function main() {
 
   // ---- Comments / Review buttons ----
   $("btn-comments").addEventListener("click", () => {
-    if (!commentsPanel.classList.contains("hidden")) { commentsPanel.classList.add("hidden"); return; }
+    if (!commentsPanel.classList.contains("hidden")) { closePanel("comments-panel"); return; }
     openCommentsPanel();
   });
   $("btn-review").addEventListener("click", () => {
-    if (!reviewPanel.classList.contains("hidden")) { reviewPanel.classList.add("hidden"); return; }
+    if (!reviewPanel.classList.contains("hidden")) { closePanel("review-panel"); return; }
     openReviewPanel();
   });
 

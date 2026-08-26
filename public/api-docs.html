@@ -81,6 +81,7 @@ const ed = DocEditor.init({
   baseUrl: "http://localhost:3001",
   user: "Alice",
   onReady(info)  { console.log("ready", info); },
+  onDocument(info) { console.log("document", info); },
   onChange(info) { console.log("change", info); },
 });
 
@@ -290,6 +291,7 @@ ed.destroy();
             <tr><td>statusbar</td><td>boolean</td><td>true</td><td>Show the status bar inside the iframe</td></tr>
             <tr><td>user</td><td>string</td><td>guest</td><td>Display name for presence / authorship</td></tr>
             <tr><td>onReady</td><td>function</td><td>—</td><td>Fires when the editor finishes loading</td></tr>
+            <tr><td>onDocument</td><td>function</td><td>—</td><td>Fires when the current document is opened or switched</td></tr>
             <tr><td>onChange</td><td>function</td><td>—</td><td>Fires on every content change (throttled)</td></tr>
             <tr><td>onSave</td><td>function</td><td>—</td><td>Fires when a save round-trip completes</td></tr>
             <tr><td>onPresence</td><td>function</td><td>—</td><td>Fires on presence updates (users joining/leaving)</td></tr>
