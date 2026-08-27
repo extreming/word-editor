@@ -212,16 +212,27 @@ function legalAiHeaders(businessToken, extra = {}) {
 }
 
 async function legalAiFetch(url, options) {
-  let response;
   try {
-    response = await fetch(url, {
+    return await fetch(url, {
       ...options,
       signal: AbortSignal.timeout(LEGALAI_REQUEST_TIMEOUT_MS),
     });
-  } catch (e) {
-    throw Object.assign(new Error(`LegalAI request failed: ${e.message}`), { status: 502 });
+  } catch (error) {
+    const cause = error?.cause;
+    const code = String(cause?.code || error?.code || error?.name || "FETCH_FAILED");
+    const detail = String(cause?.message || error?.message || "unknown network error");
+    const method = String(options?.method || "GET").toUpperCase();
+    let target = "LegalAI";
+    try {
+      const parsed = new URL(url);
+      target = `${parsed.origin}${parsed.pathname}`;
+    } catch {}
+    console.error("LegalAI request error", { method, target, code, detail });
+    throw Object.assign(
+      new Error(`LegalAI request failed (${code}): ${detail}`),
+      { status: 502, causeCode: code }
+    );
   }
-  return response;
 }
 
 async function downloadLegalAiDocument(docId, businessToken) {
