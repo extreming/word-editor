@@ -275,7 +275,6 @@ async function publishLegalAiDocument(meta, businessToken, reason) {
     method: "POST",
     headers: legalAiHeaders(businessToken, {
       "Content-Type": `multipart/form-data; boundary=${boundary}`,
-      "Content-Length": String(body.length),
       "X-Word-Editor-Save-Reason": reason,
     }),
     body,
