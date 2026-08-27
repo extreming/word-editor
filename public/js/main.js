@@ -2193,6 +2193,7 @@ async function main() {
           if (track.isEnabled())
             track.insertText((m.args && m.args.text) || "");
           else insertTextAtCaret(editor, (m.args && m.args.text) || "");
+          findPanel.clear();
           scheduleSave();
           reply({ ok: true });
           break;
@@ -2206,6 +2207,7 @@ async function main() {
               editor,
               sanitizeHtml((m.args && m.args.html) || ""),
             );
+          findPanel.clear();
           scheduleSave();
           reply({ ok: true });
           break;
