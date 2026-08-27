@@ -1,22 +1,55 @@
 import {
-  buildToolbar, attachEditorBehaviors, attachTableToolbar, attachContextMenu,
-  attachImageEditing, initTooltips,
-  createFindPanel, createTrackChanges, wrapSelectionComment,
-  sanitizeHtml, insertHtmlAtCaret, insertTextAtCaret, openPageSetupDialog,
-  openDialog, countWords, saveSelection, restoreSelection,
-  insertImage, openTableDialog, openLinkDialog, openSymbolDialog,
-  openWordArtDialog, openShapeDialog, insertPageBreak, insertBlankPage,
+  buildToolbar,
+  attachEditorBehaviors,
+  attachTableToolbar,
+  attachContextMenu,
+  attachImageEditing,
+  initTooltips,
+  createFindPanel,
+  createTrackChanges,
+  wrapSelectionComment,
+  sanitizeHtml,
+  insertHtmlAtCaret,
+  insertTextAtCaret,
+  openPageSetupDialog,
+  openDialog,
+  countWords,
+  saveSelection,
+  restoreSelection,
+  insertImage,
+  openTableDialog,
+  openLinkDialog,
+  openSymbolDialog,
+  openWordArtDialog,
+  openShapeDialog,
+  insertPageBreak,
+  insertBlankPage,
   scrollElementIntoEditorView,
 } from "./editor.js";
 import { History } from "./history.js";
 import {
-  importDocx, buildDocxFromHtml, supportsDocx, DEFAULT_PAGE_SETUP,
-  htmlToPlainText, plainTextToHtml, exportStandaloneHtml,
+  importDocx,
+  supportsDocx,
+  DEFAULT_PAGE_SETUP,
+  htmlToPlainText,
+  plainTextToHtml,
+  exportStandaloneHtml,
 } from "./docx.js";
 import {
-  Autosaver, SyncClient, createDocument, getDocument, listDocuments, deleteDocument,
-  importDocxFile, putDocx, saveDocument, listVersions, getVersion, restoreVersion,
-  openLegalAiSession, commitLegalAiDocument,
+  Autosaver,
+  SyncClient,
+  createDocument,
+  getDocument,
+  listDocuments,
+  deleteDocument,
+  importDocxFile,
+  saveDocument,
+  listVersions,
+  getVersion,
+  restoreVersion,
+  downloadDocumentFile,
+  openLegalAiSession,
+  commitLegalAiDocument,
 } from "./store.js";
 import { openPdf, closePdf, isPdfMode, getPdfInfo } from "./pdf-view.js";
 import { t, applyI18n, getLocale, setLocale } from "./i18n.js";
@@ -38,8 +71,10 @@ let legalAiBusinessToken = null;
 
 // page dimensions in inches
 const PAGE_INCHES = {
-  Letter: { w: 8.5, h: 11 }, A4: { w: 8.27, h: 11.69 },
-  Legal: { w: 8.5, h: 14 }, A3: { w: 11.69, h: 16.54 },
+  Letter: { w: 8.5, h: 11 },
+  A4: { w: 8.27, h: 11.69 },
+  Legal: { w: 8.5, h: 14 },
+  A3: { w: 11.69, h: 16.54 },
 };
 const PAGE_GAP = 32; // px between simulated sheets
 
@@ -93,7 +128,8 @@ async function main() {
   if (embedded) document.body.classList.add("embed");
   if (!showToolbar) toolbarHost.classList.add("hidden");
   if (!showStatusbar) $("statusbar").classList.add("hidden");
-  if (!showHistory && $("btn-history")) $("btn-history").classList.add("hidden");
+  if (!showHistory && $("btn-history"))
+    $("btn-history").classList.add("hidden");
 
   if (!supportsDocx()) {
     setStatus("error");
@@ -104,7 +140,11 @@ async function main() {
   }
 
   // ---- document state ----
-  let current = { id: null, title: t("doc.untitled"), pageSetup: { ...DEFAULT_PAGE_SETUP } };
+  let current = {
+    id: null,
+    title: t("doc.untitled"),
+    pageSetup: { ...DEFAULT_PAGE_SETUP },
+  };
   let docComments = [];
 
   // ---- clean serialization (pagination spacers + UI marks stripped) ----
@@ -127,8 +167,12 @@ async function main() {
   function getCleanHtml() {
     const clone = editor.cloneNode(true);
     clearTablePagination(clone);
-    for (const el of clone.querySelectorAll("[data-pg]")) clearPaginationOffset(el);
-    for (const el of clone.querySelectorAll(".comment-ref.active")) el.classList.remove("active");
+    for (const spacer of clone.querySelectorAll("[data-pg-flow]"))
+      spacer.remove();
+    for (const el of clone.querySelectorAll("[data-pg]"))
+      clearPaginationOffset(el);
+    for (const el of clone.querySelectorAll(".comment-ref.active"))
+      el.classList.remove("active");
     for (const m of clone.querySelectorAll("mark.find-hit")) {
       const p = m.parentNode;
       while (m.firstChild) p.insertBefore(m.firstChild, m);
@@ -140,16 +184,36 @@ async function main() {
   // ---- visual pagination: simulate separate sheets ----
   let paginateTimer = null;
   let ruler = null;
-  let pageMetrics = { count: 1, ph: 1056, gap: PAGE_GAP, mTop: 96, mBottom: 96, mLeft: 96, mRight: 96, pageWidth: 816 };
+  let pageMetrics = {
+    count: 1,
+    ph: 1056,
+    gap: PAGE_GAP,
+    mTop: 96,
+    mBottom: 96,
+    mLeft: 96,
+    mRight: 96,
+    pageWidth: 816,
+  };
   function schedulePaginate() {
     clearTimeout(paginateTimer);
-    paginateTimer = setTimeout(paginate, 180);
+    paginateTimer = setTimeout(() => {
+      // Preserve the editor's scroll position across re-layout: paginate()
+      // rebuilds page spacers/offsets, which otherwise snaps the view (often
+      // to the top) after content changes such as an SDK replaceAll/insert.
+      const wrap = document.querySelector("#editor-wrap");
+      const savedTop = wrap ? wrap.scrollTop : 0;
+      paginate();
+      if (wrap && wrap.scrollTop !== savedTop) wrap.scrollTop = savedTop;
+    }, 180);
   }
   function paginate() {
     const page = $("page");
     // clear previous spacers/gaps
+    for (const spacer of editor.querySelectorAll("[data-pg-flow]"))
+      spacer.remove();
     clearTablePagination(editor);
-    for (const el of editor.querySelectorAll("[data-pg]")) clearPaginationOffset(el);
+    for (const el of editor.querySelectorAll("[data-pg]"))
+      clearPaginationOffset(el);
     for (const g of page.querySelectorAll(".page-gap")) g.remove();
 
     const s = current.pageSetup || DEFAULT_PAGE_SETUP;
@@ -159,7 +223,10 @@ async function main() {
     const mTop = (m.top != null ? m.top : 1) * 96;
     const mBottom = (m.bottom != null ? m.bottom : 1) * 96;
     const contentH = ph - mTop - mBottom;
-    if (contentH < 120) { page.style.minHeight = ph + "px"; return; }
+    if (contentH < 120) {
+      page.style.minHeight = ph + "px";
+      return;
+    }
 
     // block.offsetTop is relative to #editor, whose Y=0 is already the first
     // sheet's content start (after the top page margin). Keep every content
@@ -171,15 +238,110 @@ async function main() {
     let pageEnd = contentH;
     let forceNext = false;
 
+    const editorRect = () => editor.getBoundingClientRect();
+    const elementTop = (element) =>
+      element.getBoundingClientRect().top - editorRect().top;
+
+    function offsetElementTo(element, nextStart) {
+      const top = elementTop(element);
+      const delta = nextStart - top;
+      if (delta <= 0) return top;
+      const originalMarginTop = element.style.marginTop;
+      const existing = parseFloat(getComputedStyle(element).marginTop) || 0;
+      element.style.marginTop = existing + delta + "px";
+      element.setAttribute("data-pg", "1");
+      element.setAttribute("data-pg-margin-top", originalMarginTop);
+      let measuredTop = elementTop(element);
+      const remainder = nextStart - measuredTop;
+      if (Math.abs(remainder) > 0.25) {
+        element.style.marginTop =
+          parseFloat(element.style.marginTop) + remainder + "px";
+        measuredTop = elementTop(element);
+      }
+      return measuredTop;
+    }
+
+    function characterRect(textNode, index) {
+      if (!textNode || index < 0 || index >= textNode.data.length) return null;
+      const range = document.createRange();
+      range.setStart(textNode, index);
+      range.setEnd(textNode, index + 1);
+      const rects = [...range.getClientRects()];
+      return rects.length ? rects[0] : null;
+    }
+
+    function lineStartInText(textNode, targetTop) {
+      let low = 0,
+        high = textNode.data.length;
+      while (low < high) {
+        const mid = Math.floor((low + high) / 2);
+        const rect = characterRect(textNode, mid);
+        if (!rect || rect.top < targetTop - 0.5) low = mid + 1;
+        else high = mid;
+      }
+      return Math.min(low, textNode.data.length);
+    }
+
+    function firstLineAfter(root, boundary) {
+      const base = editorRect().top;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          return node.data.trim() &&
+            !(
+              node.parentElement && node.parentElement.closest("[data-pg-flow]")
+            )
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_REJECT;
+        },
+      });
+      let textNode;
+      while ((textNode = walker.nextNode())) {
+        const range = document.createRange();
+        range.selectNodeContents(textNode);
+        const lineRects = [...range.getClientRects()];
+        const crossing = lineRects.find(
+          (rect) => rect.bottom - base > boundary + 0.25,
+        );
+        if (!crossing) continue;
+        return {
+          textNode,
+          offset: lineStartInText(textNode, crossing.top),
+          top: crossing.top - base,
+        };
+      }
+      return null;
+    }
+
+    function insertFlowSpacer(root, boundary, nextStart) {
+      const line = firstLineAfter(root, boundary);
+      if (!line || line.top >= nextStart - 0.25) return false;
+      const spacer = document.createElement("span");
+      spacer.setAttribute("data-pg-flow", "1");
+      spacer.setAttribute("contenteditable", "false");
+      spacer.setAttribute("aria-hidden", "true");
+      spacer.style.cssText = `display:block;height:${nextStart - line.top}px;padding:0;margin:0;border:0`;
+      const node = line.textNode;
+      if (line.offset <= 0) node.parentNode.insertBefore(spacer, node);
+      else if (line.offset >= node.data.length)
+        node.parentNode.insertBefore(spacer, node.nextSibling);
+      else node.parentNode.insertBefore(spacer, node.splitText(line.offset));
+      return true;
+    }
+
     function expandRowspansAt(row) {
-      const groupRows = [...row.parentElement.children].filter((el) => el.tagName === "TR");
+      const groupRows = [...row.parentElement.children].filter(
+        (el) => el.tagName === "TR",
+      );
       const insertionIndex = groupRows.indexOf(row);
       for (let i = 0; i < insertionIndex; i++) {
         for (const cell of groupRows[i].cells) {
           const span = cell.rowSpan;
           if (span > 1 && i + span > insertionIndex) {
             if (!cell.hasAttribute("data-pg-rowspan")) {
-              cell.setAttribute("data-pg-rowspan", cell.getAttribute("rowspan") || "");
+              cell.setAttribute(
+                "data-pg-rowspan",
+                cell.getAttribute("rowspan") || "",
+              );
             }
             cell.rowSpan = span + 1;
           }
@@ -197,7 +359,10 @@ async function main() {
       spacer.setAttribute("aria-hidden", "true");
       const cell = document.createElement("td");
       const columns = [...table.rows].reduce((max, item) => {
-        const count = [...item.cells].reduce((sum, itemCell) => sum + itemCell.colSpan, 0);
+        const count = [...item.cells].reduce(
+          (sum, itemCell) => sum + itemCell.colSpan,
+          0,
+        );
         return Math.max(max, count);
       }, 1);
       cell.colSpan = columns;
@@ -211,33 +376,92 @@ async function main() {
       const actualTop = table.offsetTop + row.offsetTop;
       const correction = requestedHeight - (actualTop - originalTop);
       if (Math.abs(correction) > 0.25) {
-        cell.style.height = (requestedHeight + correction) + "px";
+        cell.style.height = requestedHeight + correction + "px";
       }
     }
 
     function paginateTable(table) {
-      const rows = [...table.rows].filter((row) => !row.hasAttribute("data-pg-row"));
+      const rows = [...table.rows].filter(
+        (row) => !row.hasAttribute("data-pg-row"),
+      );
       if (!rows.length) return false;
       for (const row of rows) {
         let top = table.offsetTop + row.offsetTop;
-        const h = row.offsetHeight;
+        let h = row.offsetHeight;
         const pageStart = pageIndex * pageStride;
         const resumeCurrentPage = pageIndex > 0 && top < pageStart;
-        const needsPush = forceNext || resumeCurrentPage || top >= pageEnd || (top + h > pageEnd && h <= contentH);
+        const needsPush =
+          forceNext ||
+          resumeCurrentPage ||
+          top >= pageEnd ||
+          (top + h > pageEnd && h <= contentH);
         if (needsPush) {
           if (!resumeCurrentPage || forceNext) pageIndex++;
           const nextStart = pageIndex * pageStride;
           insertTableSpacer(table, row, nextStart - top);
-          top = table.offsetTop + row.offsetTop;
+          top = elementTop(row);
           pageEnd = pageIndex * pageStride + contentH;
           forceNext = false;
         }
-        // A genuinely over-height row cannot be split without changing its
-        // editable cell structure. Keep it intact, but advance the fixed grid
-        // so following rows and sibling blocks resume on the correct page.
+        // Long table rows are legal in Word and can flow over several pages.
+        // Insert a visual spacer at a text-line boundary in every affected
+        // cell so the simulated paper gap never paints over half a line.
         while (top + h > pageEnd) {
+          const nextStart = (pageIndex + 1) * pageStride;
+          for (const cell of row.cells) {
+            const cellTop = elementTop(cell);
+            if (cellTop + cell.offsetHeight > pageEnd)
+              insertFlowSpacer(cell, pageEnd, nextStart);
+          }
           pageIndex++;
           pageEnd = pageIndex * pageStride + contentH;
+          top = elementTop(row);
+          h = row.offsetHeight;
+        }
+      }
+      return true;
+    }
+
+    function paginateList(list) {
+      // The importer preserves nested numbering levels as nested OL/UL nodes.
+      // Browsers may expose those lists as direct siblings of their owning LI,
+      // so recurse through every direct list child instead of considering only
+      // :scope > li (which left the actual long paragraph containers unsplit).
+      const items = [...list.children].filter(
+        (item) =>
+          item.tagName === "LI" ||
+          item.tagName === "OL" ||
+          item.tagName === "UL",
+      );
+      if (!items.length) return false;
+      for (const item of items) {
+        if (item.tagName === "OL" || item.tagName === "UL") {
+          paginateList(item);
+          continue;
+        }
+        let top = elementTop(item);
+        let h = item.offsetHeight;
+        const pageStart = pageIndex * pageStride;
+        const resumeCurrentPage = pageIndex > 0 && top < pageStart;
+        const needsPush =
+          forceNext ||
+          resumeCurrentPage ||
+          top >= pageEnd ||
+          (top + h > pageEnd && h <= contentH);
+        if (needsPush) {
+          if (!resumeCurrentPage || forceNext) pageIndex++;
+          top = offsetElementTo(item, pageIndex * pageStride);
+          pageEnd = pageIndex * pageStride + contentH;
+          forceNext = false;
+          h = item.offsetHeight;
+        }
+        while (top + h > pageEnd) {
+          const nextStart = (pageIndex + 1) * pageStride;
+          insertFlowSpacer(item, pageEnd, nextStart);
+          pageIndex++;
+          pageEnd = pageIndex * pageStride + contentH;
+          top = elementTop(item);
+          h = item.offsetHeight;
         }
       }
       return true;
@@ -250,30 +474,26 @@ async function main() {
         if (block.classList.contains("page-break")) forceNext = true;
         continue;
       }
+      if (
+        (block.tagName === "OL" || block.tagName === "UL") &&
+        paginateList(block)
+      ) {
+        if (block.classList.contains("page-break")) forceNext = true;
+        continue;
+      }
       const h = block.offsetHeight;
       let top = block.offsetTop;
       const pageStart = pageIndex * pageStride;
       const resumeCurrentPage = pageIndex > 0 && top < pageStart;
-      const needsPush = forceNext || resumeCurrentPage || top >= pageEnd || (top + h > pageEnd && h <= contentH);
+      const needsPush =
+        forceNext ||
+        resumeCurrentPage ||
+        top >= pageEnd ||
+        (top + h > pageEnd && h <= contentH);
       if (needsPush) {
         if (!resumeCurrentPage || forceNext) pageIndex++;
         const nextStart = pageIndex * pageStride;
-        const delta = nextStart - top;
-        if (delta > 0) {
-          const originalMarginTop = block.style.marginTop;
-          const existing = parseFloat(getComputedStyle(block).marginTop) || 0;
-          block.style.marginTop = (existing + delta) + "px";
-          block.setAttribute("data-pg", "1");
-          block.setAttribute("data-pg-margin-top", originalMarginTop);
-          top = block.offsetTop;
-          // Adjacent vertical margins can collapse. Correct the measured
-          // remainder once so the text starts exactly on the paper grid.
-          const remainder = nextStart - top;
-          if (Math.abs(remainder) > 0.25) {
-            block.style.marginTop = (parseFloat(block.style.marginTop) + remainder) + "px";
-            top = block.offsetTop;
-          }
-        }
+        if (nextStart - top > 0) top = offsetElementTo(block, nextStart);
         pageEnd = pageIndex * pageStride + contentH;
         forceNext = false;
       }
@@ -287,20 +507,25 @@ async function main() {
           pageEnd = pageIndex * pageStride + contentH;
         }
       }
-      if (block.classList && block.classList.contains("page-break")) forceNext = true;
+      if (block.classList && block.classList.contains("page-break"))
+        forceNext = true;
     }
     const count = pageIndex + 1;
-    page.style.minHeight = (count * ph + (count - 1) * PAGE_GAP) + "px";
+    page.style.minHeight = count * ph + (count - 1) * PAGE_GAP + "px";
     for (let boundary = 0; boundary < count - 1; boundary++) {
       const g = document.createElement("div");
       g.className = "page-gap";
-      g.style.top = (boundary * pageStride + ph) + "px";
+      g.style.top = boundary * pageStride + ph + "px";
       g.style.height = PAGE_GAP + "px";
       g.setAttribute("contenteditable", "false");
       page.appendChild(g);
     }
     pageMetrics = {
-      count, ph, gap: PAGE_GAP, mTop, mBottom,
+      count,
+      ph,
+      gap: PAGE_GAP,
+      mTop,
+      mBottom,
       mLeft: (m.left != null ? m.left : 1) * 96,
       mRight: (m.right != null ? m.right : 1) * 96,
       pageWidth: page.clientWidth,
@@ -325,19 +550,50 @@ async function main() {
 
   // ---- headers / footers / page numbers (rendered per simulated sheet) ----
   function toRoman(n) {
-    const map = [[1000,"m"],[900,"cm"],[500,"d"],[400,"cd"],[100,"c"],[90,"xc"],[50,"l"],[40,"xl"],[10,"x"],[9,"ix"],[5,"v"],[4,"iv"],[1,"i"]];
-    let out = ""; for (const [v, s] of map) while (n >= v) { out += s; n -= v; } return out;
+    const map = [
+      [1000, "m"],
+      [900, "cm"],
+      [500, "d"],
+      [400, "cd"],
+      [100, "c"],
+      [90, "xc"],
+      [50, "l"],
+      [40, "xl"],
+      [10, "x"],
+      [9, "ix"],
+      [5, "v"],
+      [4, "iv"],
+      [1, "i"],
+    ];
+    let out = "";
+    for (const [v, s] of map)
+      while (n >= v) {
+        out += s;
+        n -= v;
+      }
+    return out;
   }
   function toAlpha(n) {
-    let out = ""; while (n > 0) { n--; out = String.fromCharCode(97 + (n % 26)) + out; n = Math.floor(n / 26); } return out;
+    let out = "";
+    while (n > 0) {
+      n--;
+      out = String.fromCharCode(97 + (n % 26)) + out;
+      n = Math.floor(n / 26);
+    }
+    return out;
   }
   function pageNumText(n, total, fmt) {
     switch (fmt) {
-      case "roman": return toRoman(n);
-      case "alpha": return toAlpha(n);
-      case "page": return "Page " + n;
-      case "pageOfN": return "Page " + n + " of " + total;
-      default: return String(n);
+      case "roman":
+        return toRoman(n);
+      case "alpha":
+        return toAlpha(n);
+      case "page":
+        return "Page " + n;
+      case "pageOfN":
+        return "Page " + n + " of " + total;
+      default:
+        return String(n);
     }
   }
   function getChrome() {
@@ -350,7 +606,9 @@ async function main() {
     page.querySelectorAll(".pg-chrome").forEach((e) => e.remove());
     const ch = (current.pageSetup && current.pageSetup.chrome) || {};
     const met = pageMetrics;
-    const hasChromeText = (def) => def && (def.text || (def.zones && Object.values(def.zones).some(Boolean)));
+    const hasChromeText = (def) =>
+      def &&
+      (def.text || (def.zones && Object.values(def.zones).some(Boolean)));
     const hasHeader = hasChromeText(ch.header);
     const hasFooter = hasChromeText(ch.footer);
     const pn = ch.pageNumber && ch.pageNumber.enabled ? ch.pageNumber : null;
@@ -367,22 +625,35 @@ async function main() {
         band.style.width = contentW + "px";
         band.setAttribute("data-type", type);
         if (def && def.align) band.setAttribute("data-align", def.align);
-        const cells = { left: document.createElement("span"), center: document.createElement("span"), right: document.createElement("span") };
-        for (const [k2, c] of Object.entries(cells)) { c.className = "pg-cell pg-" + k2; c.contentEditable = "false"; band.appendChild(c); }
+        const cells = {
+          left: document.createElement("span"),
+          center: document.createElement("span"),
+          right: document.createElement("span"),
+        };
+        for (const [k2, c] of Object.entries(cells)) {
+          c.className = "pg-cell pg-" + k2;
+          c.contentEditable = "false";
+          band.appendChild(c);
+        }
         if (def && def.zones) {
           for (const [align, value] of Object.entries(def.zones)) {
             if (cells[align] && value) cells[align].textContent = value;
           }
-        } else if (def && def.text) cells[def.align || "center"].textContent = def.text;
+        } else if (def && def.text)
+          cells[def.align || "center"].textContent = def.text;
         if (pn && pn.place && pn.place.startsWith(place)) {
           const where = pn.place.split("-")[1] || "center";
           const t = pageNumText(k, met.count, pn.format);
-          cells[where].textContent = (cells[where].textContent ? cells[where].textContent + "  " : "") + t;
+          cells[where].textContent =
+            (cells[where].textContent ? cells[where].textContent + "  " : "") +
+            t;
         }
         // double-click to edit text inline
         band.addEventListener("dblclick", (event) => {
           const clicked = event.target.closest(".pg-cell");
-          const align = clicked ? clicked.className.match(/pg-(left|center|right)/)?.[1] : (band.getAttribute("data-align") || "center");
+          const align = clicked
+            ? clicked.className.match(/pg-(left|center|right)/)?.[1]
+            : band.getAttribute("data-align") || "center";
           const cell = clicked || band.querySelector(`.pg-cell.pg-${align}`);
           if (!cell) return;
           cell.contentEditable = "true";
@@ -396,16 +667,24 @@ async function main() {
             if (cell.contentEditable !== "true") return;
             cell.contentEditable = "false";
             const text = cell.textContent.replace(/\s+/g, " ").trim();
-            const orig = def && def.zones ? (def.zones[align] || "") : (def && def.text ? def.text : "");
+            const orig =
+              def && def.zones
+                ? def.zones[align] || ""
+                : def && def.text
+                  ? def.text
+                  : "";
             if (text && text !== orig) {
               const s = current.pageSetup || (current.pageSetup = {});
               const ct = s.chrome || (s.chrome = {});
               ct[type] = ct[type] || {};
               if (def && def.zones) {
                 ct[type].zones = { ...def.zones, [align]: text };
-                const populated = Object.entries(ct[type].zones).filter(([, value]) => value);
+                const populated = Object.entries(ct[type].zones).filter(
+                  ([, value]) => value,
+                );
                 ct[type].text = populated.length === 1 ? populated[0][1] : "";
-                ct[type].align = populated.length === 1 ? populated[0][0] : "left";
+                ct[type].align =
+                  populated.length === 1 ? populated[0][0] : "left";
               } else {
                 ct[type].text = text;
                 ct[type].align = align;
@@ -416,17 +695,30 @@ async function main() {
           };
           cell.addEventListener("blur", commit, { once: true });
           cell.addEventListener("keydown", (ke) => {
-            if (ke.key === "Enter") { ke.preventDefault(); cell.blur(); }
+            if (ke.key === "Enter") {
+              ke.preventDefault();
+              cell.blur();
+            }
           });
         });
         page.appendChild(band);
       };
       // header band sits in the top margin; footer band in the bottom margin
       if (hasHeader || (pn && pn.place && pn.place.startsWith("header"))) {
-        mkBand(sheetTop + Math.max(12, met.mTop / 2 - 8), ch.header, "header", "header");
+        mkBand(
+          sheetTop + Math.max(12, met.mTop / 2 - 8),
+          ch.header,
+          "header",
+          "header",
+        );
       }
       if (hasFooter || (pn && pn.place && pn.place.startsWith("footer"))) {
-        mkBand(sheetTop + met.ph - met.mBottom / 2 - 8, ch.footer, "footer", "footer");
+        mkBand(
+          sheetTop + met.ph - met.mBottom / 2 - 8,
+          ch.footer,
+          "footer",
+          "footer",
+        );
       }
     }
   }
@@ -441,14 +733,16 @@ async function main() {
     const wr = wrap.getBoundingClientRect();
     // sample a point ~1/3 down the viewport — the page occupying that band reads
     // as the "current" page (and this absorbs the ruler/padding offset above the page)
-    const probe = (wr.top - pr.top) + wrap.clientHeight * 0.34;
+    const probe = wr.top - pr.top + wrap.clientHeight * 0.34;
     const unit = (met.ph + met.gap) * zoom;
     let cur = Math.floor(probe / unit) + 1;
     cur = Math.min(met.count, Math.max(1, cur));
     const pc = $("pagecount");
     if (pc) pc.textContent = t("status.pageOf", { cur, total: met.count });
   }
-  $("editor-wrap").addEventListener("scroll", updateCurrentPage, { passive: true });
+  $("editor-wrap").addEventListener("scroll", updateCurrentPage, {
+    passive: true,
+  });
 
   // ---- rulers: fixed app chrome. The horizontal ruler is pinned right below
   // the toolbar (full width); the vertical ruler runs down the app window's
@@ -470,7 +764,7 @@ async function main() {
       '<div class="ruler-shade left"></div><div class="ruler-shade right"></div>' +
       `<div class="ruler-marker left" title="${t("ruler.leftMargin")}"></div>` +
       `<div class="ruler-marker right" title="${t("ruler.rightMargin")}"></div>` +
-      '</div>';
+      "</div>";
     toolbar.after(hbar);
 
     const vbar = document.createElement("div");
@@ -480,7 +774,7 @@ async function main() {
       '<div class="ruler-vshade top"></div><div class="ruler-vshade bottom"></div>' +
       `<div class="ruler-vmarker top" title="${t("ruler.topMargin")}"></div>` +
       `<div class="ruler-vmarker bottom" title="${t("ruler.bottomMargin")}"></div>` +
-      '</div>';
+      "</div>";
     app.appendChild(vbar);
 
     const track = hbar.querySelector(".ruler-track");
@@ -497,14 +791,23 @@ async function main() {
     function pageDimsIn() {
       const s = current.pageSetup;
       const dim = PAGE_INCHES[s.size] || PAGE_INCHES.Letter;
-      return s.orientation === "landscape" ? { w: dim.h, h: dim.w } : { w: dim.w, h: dim.h };
+      return s.orientation === "landscape"
+        ? { w: dim.h, h: dim.w }
+        : { w: dim.w, h: dim.h };
     }
     // rendered px per inch (horizontal follows the drawn page width; vertical is 96*zoom)
     function scales() {
       const { w, h } = pageDimsIn();
       const pr = page.getBoundingClientRect();
       const zoom = parseFloat(getComputedStyle(page).zoom) || 1;
-      return { w, h, pr, pxH: pr.width / w, pxV: 96 * zoom, firstPageH: h * 96 * zoom };
+      return {
+        w,
+        h,
+        pr,
+        pxH: pr.width / w,
+        pxV: 96 * zoom,
+        firstPageH: h * 96 * zoom,
+      };
     }
     // cheap: keep the tracks overlaying the page as it scrolls
     function reposition() {
@@ -529,13 +832,17 @@ async function main() {
       track.querySelectorAll(".ruler-tick").forEach((t) => t.remove());
       for (let i = 0; i <= Math.floor(w); i++) {
         const t = document.createElement("div");
-        t.className = "ruler-tick"; t.style.left = i * pxH + "px"; t.textContent = i;
+        t.className = "ruler-tick";
+        t.style.left = i * pxH + "px";
+        t.textContent = i;
         track.appendChild(t);
       }
       const lpx = (m.left != null ? m.left : 1) * pxH;
       const rpx = (m.right != null ? m.right : 1) * pxH;
-      shadeL.style.width = lpx + "px"; shadeR.style.width = rpx + "px";
-      markL.style.left = lpx + "px"; markR.style.left = pr.width - rpx + "px";
+      shadeL.style.width = lpx + "px";
+      shadeR.style.width = rpx + "px";
+      markL.style.left = lpx + "px";
+      markR.style.left = pr.width - rpx + "px";
 
       // ----- vertical track = the first page's y-range within the bar -----
       vtrack.style.top = pr.top - vbar.getBoundingClientRect().top + "px";
@@ -543,14 +850,19 @@ async function main() {
       vtrack.querySelectorAll(".ruler-vtick").forEach((t) => t.remove());
       for (let i = 0; i <= Math.floor(h); i++) {
         const t = document.createElement("div");
-        t.className = "ruler-vtick"; t.style.top = i * pxV + "px"; t.textContent = i;
+        t.className = "ruler-vtick";
+        t.style.top = i * pxV + "px";
+        t.textContent = i;
         vtrack.appendChild(t);
       }
       const tpx = (m.top != null ? m.top : 1) * pxV;
       const bpx = (m.bottom != null ? m.bottom : 1) * pxV;
-      vshadeT.style.top = "0px"; vshadeT.style.height = tpx + "px";
-      vshadeB.style.top = firstPageH - bpx + "px"; vshadeB.style.height = bpx + "px";
-      vmarkT.style.top = tpx + "px"; vmarkB.style.top = firstPageH - bpx + "px";
+      vshadeT.style.top = "0px";
+      vshadeT.style.height = tpx + "px";
+      vshadeB.style.top = firstPageH - bpx + "px";
+      vshadeB.style.height = bpx + "px";
+      vmarkT.style.top = tpx + "px";
+      vmarkB.style.top = firstPageH - bpx + "px";
     }
 
     function makeHDrag(marker, side) {
@@ -562,15 +874,29 @@ async function main() {
         const mv = (ev) => {
           const x = Math.max(0, Math.min(totalPx, ev.clientX - rect.left));
           const s = current.pageSetup;
-          const margins = { ...(s.margins || { top: 1, right: 1, bottom: 1, left: 1 }) };
-          if (side === "left") margins.left = Math.max(0.2, Math.min(x / pxH, w - margins.right - 0.5));
-          else margins.right = Math.max(0.2, Math.min((totalPx - x) / pxH, w - margins.left - 0.5));
+          const margins = {
+            ...(s.margins || { top: 1, right: 1, bottom: 1, left: 1 }),
+          };
+          if (side === "left")
+            margins.left = Math.max(
+              0.2,
+              Math.min(x / pxH, w - margins.right - 0.5),
+            );
+          else
+            margins.right = Math.max(
+              0.2,
+              Math.min((totalPx - x) / pxH, w - margins.left - 0.5),
+            );
           margins.left = Math.round(margins.left * 100) / 100;
           margins.right = Math.round(margins.right * 100) / 100;
           applyPageSetup({ ...s, margins });
           render();
         };
-        const up = () => { document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up); scheduleSave(); };
+        const up = () => {
+          document.removeEventListener("mousemove", mv);
+          document.removeEventListener("mouseup", up);
+          scheduleSave();
+        };
         document.addEventListener("mousemove", mv);
         document.addEventListener("mouseup", up);
       });
@@ -583,15 +909,29 @@ async function main() {
         const mv = (ev) => {
           const y = Math.max(0, Math.min(firstPageH, ev.clientY - rect.top));
           const s = current.pageSetup;
-          const margins = { ...(s.margins || { top: 1, right: 1, bottom: 1, left: 1 }) };
-          if (side === "top") margins.top = Math.max(0.2, Math.min(y / pxV, h - margins.bottom - 0.5));
-          else margins.bottom = Math.max(0.2, Math.min((firstPageH - y) / pxV, h - margins.top - 0.5));
+          const margins = {
+            ...(s.margins || { top: 1, right: 1, bottom: 1, left: 1 }),
+          };
+          if (side === "top")
+            margins.top = Math.max(
+              0.2,
+              Math.min(y / pxV, h - margins.bottom - 0.5),
+            );
+          else
+            margins.bottom = Math.max(
+              0.2,
+              Math.min((firstPageH - y) / pxV, h - margins.top - 0.5),
+            );
           margins.top = Math.round(margins.top * 100) / 100;
           margins.bottom = Math.round(margins.bottom * 100) / 100;
           applyPageSetup({ ...s, margins });
           render();
         };
-        const up = () => { document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up); scheduleSave(); };
+        const up = () => {
+          document.removeEventListener("mousemove", mv);
+          document.removeEventListener("mouseup", up);
+          scheduleSave();
+        };
         document.addEventListener("mousemove", mv);
         document.addEventListener("mouseup", up);
       });
@@ -610,7 +950,8 @@ async function main() {
     current.pageSetup = setup || { ...DEFAULT_PAGE_SETUP };
     const s = current.pageSetup;
     const dim = PAGE_INCHES[s.size] || PAGE_INCHES.Letter;
-    let w = dim.w, h = dim.h;
+    let w = dim.w,
+      h = dim.h;
     if (s.orientation === "landscape") [w, h] = [h, w];
     const m = s.margins || DEFAULT_PAGE_SETUP.margins;
     const page = $("page");
@@ -644,7 +985,9 @@ async function main() {
   // ---- autosave + realtime ----
   const emitToHost = (event, data) => {
     if (window.parent !== window) {
-      try { window.parent.postMessage({ we: 1, event, data }, "*"); } catch {}
+      try {
+        window.parent.postMessage({ we: 1, event, data }, "*");
+      } catch {}
     }
   };
 
@@ -658,16 +1001,24 @@ async function main() {
 
   const track = createTrackChanges(editor, () => userName);
 
-  const autosaver = new Autosaver(null, 1200, setStatus,
-    (doc) => { // onSaved
+  const autosaver = new Autosaver(
+    null,
+    1200,
+    setStatus,
+    (doc) => {
+      // onSaved
       $("doc-info").textContent = `rev ${doc.rev}`;
       sync.sendUpdate({
-        rev: doc.rev, title: doc.title, state: doc.state, pageSetup: doc.pageSetup,
-        comments: doc.comments, trackChanges: doc.trackChanges,
+        rev: doc.rev,
+        title: doc.title,
+        state: doc.state,
+        pageSetup: doc.pageSetup,
+        comments: doc.comments,
+        trackChanges: doc.trackChanges,
       });
       emitToHost("autosave", { id: doc.id, rev: doc.rev, title: doc.title });
     },
-    (server) => showConflictBanner(server) // onConflict (409)
+    (server) => showConflictBanner(server), // onConflict (409)
   );
 
   const sync = new SyncClient(userName, {
@@ -687,16 +1038,32 @@ async function main() {
     onUpdate(msg) {
       if (msg.rev != null && msg.rev <= autosaver.rev) return;
       if (autosaver.dirty || autosaver.inFlight) {
-        showConflictBanner({ rev: msg.rev, title: msg.title, state: msg.state, pageSetup: msg.pageSetup, comments: msg.comments }, msg.from);
+        showConflictBanner(
+          {
+            rev: msg.rev,
+            title: msg.title,
+            state: msg.state,
+            pageSetup: msg.pageSetup,
+            comments: msg.comments,
+          },
+          msg.from,
+        );
         return;
       }
       // clean local state: follow the remote edit
       autosaver.suspended = true;
-      if (msg.title != null && msg.title !== titleInput.value) titleInput.value = msg.title;
+      if (msg.title != null && msg.title !== titleInput.value)
+        titleInput.value = msg.title;
       if (msg.pageSetup) applyPageSetup(msg.pageSetup);
       if (msg.state != null) setEditorContent(msg.state);
-      if (msg.comments) { docComments = msg.comments; renderComments(); }
-      if (msg.trackChanges != null) { track.setEnabled(!!msg.trackChanges); syncTrackUI(); }
+      if (msg.comments) {
+        docComments = msg.comments;
+        renderComments();
+      }
+      if (msg.trackChanges != null) {
+        track.setEnabled(!!msg.trackChanges);
+        syncTrackUI();
+      }
       if (msg.rev != null) autosaver.setRev(msg.rev);
       autosaver.suspended = false;
       setStatus("synced");
@@ -708,7 +1075,9 @@ async function main() {
     banner.classList.remove("hidden");
     banner.innerHTML = "";
     const who = from ? `${from.user}` : t("conflict.anotherSession");
-    banner.appendChild(document.createTextNode(t("conflict.changedBy", { who }) + " "));
+    banner.appendChild(
+      document.createTextNode(t("conflict.changedBy", { who }) + " "),
+    );
     const loadBtn = document.createElement("button");
     loadBtn.textContent = t("conflict.loadTheirs");
     loadBtn.addEventListener("click", () => {
@@ -716,7 +1085,10 @@ async function main() {
       if (server.title != null) titleInput.value = server.title;
       if (server.pageSetup) applyPageSetup(server.pageSetup);
       setEditorContent(server.state || "");
-      if (server.comments) { docComments = server.comments; renderComments(); }
+      if (server.comments) {
+        docComments = server.comments;
+        renderComments();
+      }
       autosaver.setRev(server.rev || 0);
       autosaver.dirty = false;
       autosaver.suspended = false;
@@ -736,8 +1108,11 @@ async function main() {
 
   const scheduleSave = () => {
     autosaver.update({
-      title: titleInput.value, state: getCleanHtml(), pageSetup: current.pageSetup,
-      comments: docComments, trackChanges: track.isEnabled(),
+      title: titleInput.value,
+      state: getCleanHtml(),
+      pageSetup: current.pageSetup,
+      comments: docComments,
+      trackChanges: track.isEnabled(),
     });
   };
 
@@ -748,7 +1123,14 @@ async function main() {
     setStatus("saving");
     const result = await commitLegalAiDocument(current.id, reason, keepalive);
     setStatus("saved");
-    emitToHost("save", { id: current.id, rev: autosaver.rev, title: titleInput.value, committed: true, reason, result });
+    emitToHost("save", {
+      id: current.id,
+      rev: autosaver.rev,
+      title: titleInput.value,
+      committed: true,
+      reason,
+      result,
+    });
     return result;
   }
 
@@ -773,7 +1155,10 @@ async function main() {
     if (!legalAiSessionOptions || !session?.expiresAt) return;
     // Refresh two minutes before expiry. Reopening an active session validates
     // the business token but deliberately keeps the current in-memory draft.
-    const delay = Math.max(60_000, session.expiresAt * 1000 - Date.now() - 120_000);
+    const delay = Math.max(
+      60_000,
+      session.expiresAt * 1000 - Date.now() - 120_000,
+    );
     legalAiTokenRefreshTimer = setTimeout(refreshLegalAiSession, delay);
   }
 
@@ -784,14 +1169,18 @@ async function main() {
   const commentsItems = $("comments-items");
 
   function commentAnchors(cid) {
-    return editor.querySelectorAll(`.comment-ref[data-cid="${CSS.escape(cid)}"]`);
+    return editor.querySelectorAll(
+      `.comment-ref[data-cid="${CSS.escape(cid)}"]`,
+    );
   }
   function jumpToComment(cid) {
     const anchors = commentAnchors(cid);
     if (!anchors.length) return;
     scrollElementIntoEditorView(editor, anchors[0]);
     for (const a of anchors) a.classList.add("active");
-    setTimeout(() => { for (const a of anchors) a.classList.remove("active"); }, 1600);
+    setTimeout(() => {
+      for (const a of anchors) a.classList.remove("active");
+    }, 1600);
   }
   function renderComments(focusCid) {
     commentsItems.innerHTML = "";
@@ -805,14 +1194,18 @@ async function main() {
     for (const c of docComments) {
       const li = document.createElement("li");
       const card = document.createElement("div");
-      card.className = "comment-card" + (c.resolved ? " resolved" : "") + (c.id === focusCid ? " focus" : "");
+      card.className =
+        "comment-card" +
+        (c.resolved ? " resolved" : "") +
+        (c.id === focusCid ? " focus" : "");
       const head = document.createElement("div");
       head.className = "comment-head";
       const author = document.createElement("span");
       author.className = "comment-author";
       author.textContent = c.author || t("comments.unknown");
       const when = document.createElement("span");
-      when.textContent = (c.resolved ? t("comments.resolvedPrefix") : "") + fmtTime(c.createdAt);
+      when.textContent =
+        (c.resolved ? t("comments.resolvedPrefix") : "") + fmtTime(c.createdAt);
       head.append(author, when);
       const text = document.createElement("div");
       text.className = "comment-text";
@@ -848,18 +1241,25 @@ async function main() {
         input.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter" && input.value.trim()) {
             c.replies = c.replies || [];
-            c.replies.push({ author: userName, text: input.value.trim(), createdAt: Date.now() });
+            c.replies.push({
+              author: userName,
+              text: input.value.trim(),
+              createdAt: Date.now(),
+            });
             renderComments(c.id);
             scheduleSave();
           } else if (ev.key === "Escape") input.remove();
         });
       });
       const resolveBtn = document.createElement("button");
-      resolveBtn.textContent = c.resolved ? t("comments.reopen") : t("comments.resolve");
+      resolveBtn.textContent = c.resolved
+        ? t("comments.reopen")
+        : t("comments.resolve");
       resolveBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         c.resolved = !c.resolved;
-        for (const a of commentAnchors(c.id)) a.classList.toggle("resolved", c.resolved);
+        for (const a of commentAnchors(c.id))
+          a.classList.toggle("resolved", c.resolved);
         renderComments(c.id);
         scheduleSave();
       });
@@ -893,21 +1293,33 @@ async function main() {
   function addCommentFlow() {
     const ta = document.createElement("textarea");
     ta.rows = 3;
-    ta.style.cssText = "width:100%;box-sizing:border-box;font:13px/1.4 inherit;padding:6px";
+    ta.style.cssText =
+      "width:100%;box-sizing:border-box;font:13px/1.4 inherit;padding:6px";
     ta.placeholder = t("comments.writePlaceholder");
     openDialog(t("comments.addTitle"), ta, [
       { label: t("dlg.cancel") },
       {
-        label: t("comments.commentLabel"), primary: true,
+        label: t("comments.commentLabel"),
+        primary: true,
         onClick: () => {
           const text = ta.value.trim();
           if (!text) return false;
-          const cid = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+          const cid =
+            "c" +
+            Date.now().toString(36) +
+            Math.random().toString(36).slice(2, 5);
           if (!wrapSelectionComment(editor, cid)) {
             alert(t("comments.selectFirst"));
             return;
           }
-          docComments.push({ id: cid, author: userName, text, createdAt: Date.now(), resolved: false, replies: [] });
+          docComments.push({
+            id: cid,
+            author: userName,
+            text,
+            createdAt: Date.now(),
+            resolved: false,
+            replies: [],
+          });
           openCommentsPanel(cid);
           scheduleSave();
         },
@@ -917,7 +1329,8 @@ async function main() {
   // clicking an anchor opens its comment
   editor.addEventListener("click", (e) => {
     const ref = e.target.closest && e.target.closest("span.comment-ref");
-    if (ref && editor.contains(ref)) openCommentsPanel(ref.getAttribute("data-cid"));
+    if (ref && editor.contains(ref))
+      openCommentsPanel(ref.getAttribute("data-cid"));
   });
 
   // ---------------------------------------------------------------
@@ -930,7 +1343,8 @@ async function main() {
   function syncTrackUI() {
     trackToggle.checked = track.isEnabled();
     const tb = toolbarHost.querySelector(".toolbar");
-    if (tb && tb.trackBtn) tb.trackBtn.classList.toggle("active", track.isEnabled());
+    if (tb && tb.trackBtn)
+      tb.trackBtn.classList.toggle("active", track.isEnabled());
   }
   function renderReview() {
     reviewItems.innerHTML = "";
@@ -938,19 +1352,25 @@ async function main() {
     if (!changes.length) {
       const li = document.createElement("li");
       li.className = "muted";
-      li.textContent = track.isEnabled() ? t("review.emptyRecording") : t("review.emptyOff");
+      li.textContent = track.isEnabled()
+        ? t("review.emptyRecording")
+        : t("review.emptyOff");
       reviewItems.appendChild(li);
       return;
     }
     for (const ch of changes) {
       const li = document.createElement("li");
       const card = document.createElement("div");
-      card.className = "review-item " + (ch.type === "insertion" ? "ins" : "del");
+      card.className =
+        "review-item " + (ch.type === "insertion" ? "ins" : "del");
       const head = document.createElement("div");
       head.className = "comment-head";
       const badge = document.createElement("span");
       badge.className = "badge";
-      badge.textContent = (ch.type === "insertion" ? t("review.inserted") : t("review.deleted")) + " · " + ch.author;
+      badge.textContent =
+        (ch.type === "insertion" ? t("review.inserted") : t("review.deleted")) +
+        " · " +
+        ch.author;
       const when = document.createElement("span");
       when.textContent = ch.ts ? fmtTime(ch.ts) : "";
       head.append(badge, when);
@@ -961,10 +1381,18 @@ async function main() {
       actions.className = "comment-actions";
       const acc = document.createElement("button");
       acc.textContent = t("review.accept");
-      acc.addEventListener("click", (e) => { e.stopPropagation(); track.accept(ch.node); renderReview(); });
+      acc.addEventListener("click", (e) => {
+        e.stopPropagation();
+        track.accept(ch.node);
+        renderReview();
+      });
       const rej = document.createElement("button");
       rej.textContent = t("review.reject");
-      rej.addEventListener("click", (e) => { e.stopPropagation(); track.reject(ch.node); renderReview(); });
+      rej.addEventListener("click", (e) => {
+        e.stopPropagation();
+        track.reject(ch.node);
+        renderReview();
+      });
       actions.append(acc, rej);
       card.append(head, snippet, actions);
       card.addEventListener("click", () => {
@@ -1029,28 +1457,33 @@ async function main() {
     }
   }
   for (const button of document.querySelectorAll("[data-close-panel]")) {
-    button.addEventListener("click", () => closePanel(button.dataset.closePanel));
+    button.addEventListener("click", () =>
+      closePanel(button.dataset.closePanel),
+    );
   }
 
   // ---- toolbar / behaviors ----
   const findPanel = createFindPanel(editor, $("find-host"));
   if (showToolbar && mode === "edit") {
-    toolbarHost.appendChild(buildToolbar(editor, {
-      history: editHistory,
-      toggleFind: () => findPanel.toggle(),
-      print: () => window.print(),
-      pageSetup: () => openPageSetupDialog(current.pageSetup, (setup) => {
-        applyPageSetup(setup);
-        scheduleSave();
+    toolbarHost.appendChild(
+      buildToolbar(editor, {
+        history: editHistory,
+        toggleFind: () => findPanel.toggle(),
+        print: () => window.print(),
+        pageSetup: () =>
+          openPageSetupDialog(current.pageSetup, (setup) => {
+            applyPageSetup(setup);
+            scheduleSave();
+          }),
+        addComment: () => addCommentFlow(),
+        toggleTrack: () => {
+          track.setEnabled(!track.isEnabled());
+          syncTrackUI();
+          scheduleSave();
+          return track.isEnabled();
+        },
       }),
-      addComment: () => addCommentFlow(),
-      toggleTrack: () => {
-        track.setEnabled(!track.isEnabled());
-        syncTrackUI();
-        scheduleSave();
-        return track.isEnabled();
-      },
-    }));
+    );
   }
   attachEditorBehaviors(editor, { track, history: editHistory });
   attachTableToolbar(editor, $("page-outer"));
@@ -1060,8 +1493,14 @@ async function main() {
   attachContextMenu(editor, {
     addComment: () => addCommentFlow(),
     openComment: (cid) => openCommentsPanel(cid),
-    acceptChange: (node) => { track.accept(node); if (!reviewPanel.classList.contains("hidden")) renderReview(); },
-    rejectChange: (node) => { track.reject(node); if (!reviewPanel.classList.contains("hidden")) renderReview(); },
+    acceptChange: (node) => {
+      track.accept(node);
+      if (!reviewPanel.classList.contains("hidden")) renderReview();
+    },
+    rejectChange: (node) => {
+      track.reject(node);
+      if (!reviewPanel.classList.contains("hidden")) renderReview();
+    },
   });
 
   if (mode === "view") {
@@ -1075,7 +1514,11 @@ async function main() {
     const meta = await getDocument(id);
     if (!meta) return false;
     autosaver.setId(meta.id, meta.rev || 0);
-    current = { id: meta.id, title: meta.title, pageSetup: meta.pageSetup || { ...DEFAULT_PAGE_SETUP } };
+    current = {
+      id: meta.id,
+      title: meta.title,
+      pageSetup: meta.pageSetup || { ...DEFAULT_PAGE_SETUP },
+    };
     docComments = meta.comments || [];
     track.setEnabled(!!meta.trackChanges);
     syncTrackUI();
@@ -1160,14 +1603,22 @@ async function main() {
         if (isPdfMode()) closePdf();
         await openPdf(file, {
           title: file.name.replace(/\.pdf$/i, ""),
-          setTitle: (t) => { titleInput.value = t; },
+          setTitle: (t) => {
+            titleInput.value = t;
+          },
           setStatus: (s) => setStatus(s),
-          onClosed: () => { updateWordCount(); },
+          onClosed: () => {
+            updateWordCount();
+          },
           fitWidthDefault: true,
         });
         setStatus("saved");
         const info = getPdfInfo();
-        if (info) $("pagecount").textContent = t("status.pdfPages", { n: info.numPages, unit: t(info.numPages === 1 ? "status.page" : "status.pages") });
+        if (info)
+          $("pagecount").textContent = t("status.pdfPages", {
+            n: info.numPages,
+            unit: t(info.numPages === 1 ? "status.page" : "status.pages"),
+          });
       } catch (e) {
         console.error(e);
         setStatus("error");
@@ -1181,7 +1632,12 @@ async function main() {
     if (isPdfMode()) closePdf();
     setStatus("saving");
     try {
-      let html, pageSetup = { ...DEFAULT_PAGE_SETUP }, comments = [], title, seeded, skipClientSave = false;
+      let html,
+        pageSetup = { ...DEFAULT_PAGE_SETUP },
+        comments = [],
+        title,
+        seeded,
+        skipClientSave = false;
       if (isLegacyWordDoc) {
         // No client-side parser exists for this format — upload the raw
         // bytes and let the server convert (LibreOffice) + parse it, then
@@ -1223,7 +1679,12 @@ async function main() {
       if (skipClientSave) {
         autosaver.setRev(seeded.rev || 0);
       } else {
-        const doc = await saveDocument(seeded.id, { title, state: getCleanHtml(), pageSetup, comments });
+        const doc = await saveDocument(seeded.id, {
+          title,
+          state: getCleanHtml(),
+          pageSetup,
+          comments,
+        });
         autosaver.setRev(doc.rev);
       }
       if (!embedded) localStorage.setItem(LS_KEY, seeded.id);
@@ -1241,39 +1702,64 @@ async function main() {
 
   // ---- File menu ----
   const fileMenu = $("file-menu");
-  function closeFileMenu() { fileMenu.classList.add("hidden"); exportMenu.classList.add("hidden"); }
-  if ($("btn-file")) $("btn-file").addEventListener("click", (e) => {
-    e.stopPropagation();
-    fileMenu.classList.toggle("hidden");
+  function closeFileMenu() {
+    fileMenu.classList.add("hidden");
     exportMenu.classList.add("hidden");
-    const im = $("insert-menu");
-    if (im) im.classList.add("hidden"); // clicking File closes the Insert menu
-  });
+  }
+  if ($("btn-file"))
+    $("btn-file").addEventListener("click", (e) => {
+      e.stopPropagation();
+      fileMenu.classList.toggle("hidden");
+      exportMenu.classList.add("hidden");
+      const im = $("insert-menu");
+      if (im) im.classList.add("hidden"); // clicking File closes the Insert menu
+    });
   document.addEventListener("click", (e) => {
     if (!$("file-menu-wrap").contains(e.target)) closeFileMenu();
   });
-  if ($("btn-print")) $("btn-print").addEventListener("click", () => {
-    closeFileMenu();
-    if (isPdfMode()) { const info = getPdfInfo(); if (info) { /* delegate to pdf-view's print via its toolbar button */ const btn = document.querySelector("#pdf-toolbar button[title='Print']"); if (btn) btn.click(); return; } }
-    window.print();
-  });
-  if ($("btn-save")) $("btn-save").addEventListener("click", async () => {
-    closeFileMenu();
-    try { await formalSave("manual"); }
-    catch (e) { setStatus("error"); emitToHost("error", { message: String(e.message || e), operation: "save" }); }
-  });
-  if ($("btn-close")) $("btn-close").addEventListener("click", async () => {
-    closeFileMenu();
-    // PDF: close viewer and return to editor
-    if (isPdfMode()) { closePdf(); return; }
-    // Document: flush, clear editor, create a fresh blank doc
-    await formalSave("close");
-    if (current && current.id) sync.leave(current.id);
-    const meta = await createDocument(t("doc.untitled"));
-    await loadDocument(meta.id);
-    localStorage.removeItem(LS_KEY);
-    editor.focus();
-  });
+  if ($("btn-print"))
+    $("btn-print").addEventListener("click", () => {
+      closeFileMenu();
+      if (isPdfMode()) {
+        const info = getPdfInfo();
+        if (info) {
+          /* delegate to pdf-view's print via its toolbar button */ const btn =
+            document.querySelector("#pdf-toolbar button[title='Print']");
+          if (btn) btn.click();
+          return;
+        }
+      }
+      window.print();
+    });
+  if ($("btn-save"))
+    $("btn-save").addEventListener("click", async () => {
+      closeFileMenu();
+      try {
+        await formalSave("manual");
+      } catch (e) {
+        setStatus("error");
+        emitToHost("error", {
+          message: String(e.message || e),
+          operation: "save",
+        });
+      }
+    });
+  if ($("btn-close"))
+    $("btn-close").addEventListener("click", async () => {
+      closeFileMenu();
+      // PDF: close viewer and return to editor
+      if (isPdfMode()) {
+        closePdf();
+        return;
+      }
+      // Document: flush, clear editor, create a fresh blank doc
+      await formalSave("close");
+      if (current && current.id) sync.leave(current.id);
+      const meta = await createDocument(t("doc.untitled"));
+      await loadDocument(meta.id);
+      localStorage.removeItem(LS_KEY);
+      editor.focus();
+    });
   // Non-reactive app (DOM built once at startup) — switching language
   // persists the choice and reloads, same as any other locale-affecting
   // change here. The button's own label is always the OTHER language's
@@ -1292,22 +1778,36 @@ async function main() {
 
   // ---- Export menu ----
   const exportMenu = $("export-menu");
-  $("btn-export").addEventListener("click", (e) => { e.stopPropagation(); exportMenu.classList.toggle("hidden"); });
+  $("btn-export").addEventListener("click", (e) => {
+    e.stopPropagation();
+    exportMenu.classList.toggle("hidden");
+  });
   document.addEventListener("click", (e) => {
-    if (!$("export-menu-wrap").contains(e.target)) exportMenu.classList.add("hidden");
+    if (!$("export-menu-wrap").contains(e.target))
+      exportMenu.classList.add("hidden");
   });
   async function doExport(fmt) {
     const title = titleInput.value || "document";
     setStatus("saving");
     try {
       if (fmt === "docx") {
-        const blob = await buildDocxFromHtml(getCleanHtml(), { title, pageSetup: current.pageSetup, comments: docComments });
+        scheduleSave();
+        await autosaver.flush();
+        if (autosaver.lastError) throw autosaver.lastError;
+        const blob = await downloadDocumentFile(current.id, "docx");
         saveAs(blob, title + ".docx");
-        await putDocx(current.id, blob);
       } else if (fmt === "html") {
-        saveAs(new Blob([exportStandaloneHtml(getCleanHtml(), title)], { type: "text/html" }), title + ".html");
+        saveAs(
+          new Blob([exportStandaloneHtml(getCleanHtml(), title)], {
+            type: "text/html",
+          }),
+          title + ".html",
+        );
       } else if (fmt === "txt") {
-        saveAs(new Blob([htmlToPlainText(getCleanHtml())], { type: "text/plain" }), title + ".txt");
+        saveAs(
+          new Blob([htmlToPlainText(getCleanHtml())], { type: "text/plain" }),
+          title + ".txt",
+        );
       } else if (fmt === "pdf") {
         window.print();
       }
@@ -1333,7 +1833,8 @@ async function main() {
     insertMenu.classList.toggle("hidden");
   });
   document.addEventListener("click", (e) => {
-    if (!$("insert-menu-wrap").contains(e.target)) insertMenu.classList.add("hidden");
+    if (!$("insert-menu-wrap").contains(e.target))
+      insertMenu.classList.add("hidden");
   });
   insertMenu.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-ins]");
@@ -1367,7 +1868,8 @@ async function main() {
     const sel = document.createElement("select");
     for (const [v, label] of pairs) {
       const o = document.createElement("option");
-      o.value = v; o.textContent = label;
+      o.value = v;
+      o.textContent = label;
       if (value === v) o.selected = true;
       sel.appendChild(o);
     }
@@ -1377,55 +1879,100 @@ async function main() {
     const ch = getChrome();
     const cur = ch[which] || { text: "", align: "center" };
     const textIn = document.createElement("input");
-    textIn.type = "text"; textIn.value = cur.text || "";
+    textIn.type = "text";
+    textIn.value = cur.text || "";
     textIn.placeholder = t("chrome.textPlaceholder");
-    const alignSel = makeSelect([["left", t("chrome.left")], ["center", t("chrome.center")], ["right", t("chrome.right")]], cur.align || "center");
+    const alignSel = makeSelect(
+      [
+        ["left", t("chrome.left")],
+        ["center", t("chrome.center")],
+        ["right", t("chrome.right")],
+      ],
+      cur.align || "center",
+    );
     const body = document.createElement("div");
-    body.append(dlgField(t("dlg.text"), textIn), dlgField(t("chrome.alignment"), alignSel));
+    body.append(
+      dlgField(t("dlg.text"), textIn),
+      dlgField(t("chrome.alignment"), alignSel),
+    );
     const hint = document.createElement("div");
     hint.className = "dlg-hint";
-    hint.textContent = t(which === "header" ? "chrome.hintHeader" : "chrome.hintFooter");
+    hint.textContent = t(
+      which === "header" ? "chrome.hintHeader" : "chrome.hintFooter",
+    );
     body.appendChild(hint);
-    openDialog(t(which === "header" ? "chrome.editHeader" : "chrome.editFooter"), body, [
-      { label: t("dlg.cancel") },
-      {
-        label: t("dlg.apply"), primary: true,
-        onClick: () => {
-          const text = textIn.value.trim();
-          if (text) ch[which] = { text, align: alignSel.value };
-          else delete ch[which];
-          schedulePaginate();
-          scheduleSave();
+    openDialog(
+      t(which === "header" ? "chrome.editHeader" : "chrome.editFooter"),
+      body,
+      [
+        { label: t("dlg.cancel") },
+        {
+          label: t("dlg.apply"),
+          primary: true,
+          onClick: () => {
+            const text = textIn.value.trim();
+            if (text) ch[which] = { text, align: alignSel.value };
+            else delete ch[which];
+            schedulePaginate();
+            scheduleSave();
+          },
         },
-      },
-    ]);
+      ],
+    );
   }
   function openPageNumberDialog() {
     const ch = getChrome();
-    const cur = ch.pageNumber || { enabled: true, format: "arabic", place: "footer-center" };
+    const cur = ch.pageNumber || {
+      enabled: true,
+      format: "arabic",
+      place: "footer-center",
+    };
     const enCk = document.createElement("input");
-    enCk.type = "checkbox"; enCk.checked = cur.enabled !== false;
+    enCk.type = "checkbox";
+    enCk.checked = cur.enabled !== false;
     const enWrap = document.createElement("label");
     enWrap.className = "dlg-field dlg-check";
     const enSpan = document.createElement("span");
     enSpan.textContent = t("chrome.showPageNumbers");
     enWrap.append(enCk, enSpan);
-    const fmtSel = makeSelect([
-      ["arabic", "1, 2, 3"], ["roman", "i, ii, iii"], ["alpha", "a, b, c"],
-      ["page", t("chrome.fmtPage")], ["pageOfN", t("chrome.fmtPageOfN")],
-    ], cur.format || "arabic");
-    const placeSel = makeSelect([
-      ["header-left", t("chrome.topLeft")], ["header-center", t("chrome.topCenter")], ["header-right", t("chrome.topRight")],
-      ["footer-left", t("chrome.bottomLeft")], ["footer-center", t("chrome.bottomCenter")], ["footer-right", t("chrome.bottomRight")],
-    ], cur.place || "footer-center");
+    const fmtSel = makeSelect(
+      [
+        ["arabic", "1, 2, 3"],
+        ["roman", "i, ii, iii"],
+        ["alpha", "a, b, c"],
+        ["page", t("chrome.fmtPage")],
+        ["pageOfN", t("chrome.fmtPageOfN")],
+      ],
+      cur.format || "arabic",
+    );
+    const placeSel = makeSelect(
+      [
+        ["header-left", t("chrome.topLeft")],
+        ["header-center", t("chrome.topCenter")],
+        ["header-right", t("chrome.topRight")],
+        ["footer-left", t("chrome.bottomLeft")],
+        ["footer-center", t("chrome.bottomCenter")],
+        ["footer-right", t("chrome.bottomRight")],
+      ],
+      cur.place || "footer-center",
+    );
     const body = document.createElement("div");
-    body.append(enWrap, dlgField(t("chrome.format"), fmtSel), dlgField(t("chrome.position"), placeSel));
+    body.append(
+      enWrap,
+      dlgField(t("chrome.format"), fmtSel),
+      dlgField(t("chrome.position"), placeSel),
+    );
     openDialog(t("chrome.pageNumbersTitle"), body, [
       { label: t("dlg.cancel") },
       {
-        label: t("dlg.apply"), primary: true,
+        label: t("dlg.apply"),
+        primary: true,
         onClick: () => {
-          ch.pageNumber = { enabled: enCk.checked, format: fmtSel.value, place: placeSel.value };
+          ch.pageNumber = {
+            enabled: enCk.checked,
+            format: fmtSel.value,
+            place: placeSel.value,
+          };
           schedulePaginate();
           scheduleSave();
         },
@@ -1437,7 +1984,10 @@ async function main() {
   const library = $("library");
   const libraryItems = $("library-items");
   $("btn-list").addEventListener("click", async () => {
-    if (!library.classList.contains("hidden")) { closePanel("library"); return; }
+    if (!library.classList.contains("hidden")) {
+      closePanel("library");
+      return;
+    }
     openPanel("library");
     await renderLibrary();
   });
@@ -1457,7 +2007,8 @@ async function main() {
       const open = document.createElement("button");
       open.className = "lib-open";
       open.innerHTML = `<span class="lib-title"></span><span class="lib-date"></span>`;
-      open.querySelector(".lib-title").textContent = d.title || t("doc.untitled");
+      open.querySelector(".lib-title").textContent =
+        d.title || t("doc.untitled");
       open.querySelector(".lib-date").textContent = fmtTime(d.updatedAt);
       open.addEventListener("click", async () => {
         await autosaver.flush();
@@ -1487,7 +2038,10 @@ async function main() {
   const history = $("history");
   const historyItems = $("history-items");
   $("btn-history").addEventListener("click", async () => {
-    if (!history.classList.contains("hidden")) { closePanel("history"); return; }
+    if (!history.classList.contains("hidden")) {
+      closePanel("history");
+      return;
+    }
     openPanel("history");
     await renderHistory();
   });
@@ -1507,10 +2061,14 @@ async function main() {
       const info = document.createElement("button");
       info.className = "lib-open";
       info.innerHTML = `<span class="lib-title"></span><span class="lib-date"></span>`;
-      info.querySelector(".lib-title").textContent = t("history.revLabel", { rev: v.rev, title: v.title });
+      info.querySelector(".lib-title").textContent = t("history.revLabel", {
+        rev: v.rev,
+        title: v.title,
+      });
       info.querySelector(".lib-date").textContent = fmtTime(v.t);
       info.addEventListener("click", async () => {
-        if (!confirm(t("history.restoreConfirm", { when: fmtTime(v.t) }))) return;
+        if (!confirm(t("history.restoreConfirm", { when: fmtTime(v.t) })))
+          return;
         const doc = await restoreVersion(current.id, v.index);
         autosaver.setRev(doc.rev);
         titleInput.value = doc.title;
@@ -1528,11 +2086,17 @@ async function main() {
 
   // ---- Comments / Review buttons ----
   $("btn-comments").addEventListener("click", () => {
-    if (!commentsPanel.classList.contains("hidden")) { closePanel("comments-panel"); return; }
+    if (!commentsPanel.classList.contains("hidden")) {
+      closePanel("comments-panel");
+      return;
+    }
     openCommentsPanel();
   });
   $("btn-review").addEventListener("click", () => {
-    if (!reviewPanel.classList.contains("hidden")) { closePanel("review-panel"); return; }
+    if (!reviewPanel.classList.contains("hidden")) {
+      closePanel("review-panel");
+      return;
+    }
     openReviewPanel();
   });
 
@@ -1543,7 +2107,8 @@ async function main() {
   });
   $("spellcheck-toggle").addEventListener("change", (e) => {
     editor.spellcheck = e.target.checked;
-    editor.blur(); editor.focus();
+    editor.blur();
+    editor.focus();
   });
 
   // ---- keyboard shortcuts ----
@@ -1556,7 +2121,15 @@ async function main() {
     if (k === "s") {
       e.preventDefault();
       if (e.shiftKey) doExport("docx");
-      else { void formalSave("manual").catch((error) => { setStatus("error"); emitToHost("error", { message: String(error.message || error), operation: "save" }); }); }
+      else {
+        void formalSave("manual").catch((error) => {
+          setStatus("error");
+          emitToHost("error", {
+            message: String(error.message || error),
+            operation: "save",
+          });
+        });
+      }
     } else if (k === "f" && !e.shiftKey) {
       e.preventDefault();
       findPanel.toggle();
@@ -1591,13 +2164,23 @@ async function main() {
     const m = ev.data;
     if (!m || m.we !== 1 || !m.cmd) return;
     const reply = (result, error) => {
-      try { ev.source.postMessage({ we: 1, re: m.id, result, error }, "*"); } catch {}
+      try {
+        ev.source.postMessage({ we: 1, re: m.id, result, error }, "*");
+      } catch {}
     };
     try {
       switch (m.cmd) {
-        case "getContent": reply({ html: getCleanHtml() }); break;
-        case "getText": reply({ text: htmlToPlainText(getCleanHtml()) }); break;
-        case "setContent": setEditorContent(m.args && m.args.html || ""); scheduleSave(); reply({ ok: true }); break;
+        case "getContent":
+          reply({ html: getCleanHtml() });
+          break;
+        case "getText":
+          reply({ text: htmlToPlainText(getCleanHtml()) });
+          break;
+        case "setContent":
+          setEditorContent((m.args && m.args.html) || "");
+          scheduleSave();
+          reply({ ok: true });
+          break;
         // When track changes is on, these must go through track.insertText/
         // insertHtml (real <ins class="tc-ins"> revisions, visible in the
         // Review panel, undo/redo- and accept/reject-able) instead of a
@@ -1605,20 +2188,56 @@ async function main() {
         // revision" silently produces an untracked edit with no way to
         // review, accept, reject, or reliably undo it as one step.
         case "insertText":
-          editor.focus(); restoreSelection(editor);
-          if (track.isEnabled()) track.insertText((m.args && m.args.text) || "");
+          editor.focus();
+          restoreSelection(editor);
+          if (track.isEnabled())
+            track.insertText((m.args && m.args.text) || "");
           else insertTextAtCaret(editor, (m.args && m.args.text) || "");
-          scheduleSave(); reply({ ok: true }); break;
+          scheduleSave();
+          reply({ ok: true });
+          break;
         case "insertHtml":
-          editor.focus(); restoreSelection(editor);
-          if (track.isEnabled()) track.insertHtml(sanitizeHtml((m.args && m.args.html) || ""));
-          else insertHtmlAtCaret(editor, sanitizeHtml((m.args && m.args.html) || ""));
-          scheduleSave(); reply({ ok: true }); break;
-        case "getMeta": reply({ id: current.id, title: titleInput.value, rev: autosaver.rev, pageSetup: current.pageSetup, trackChanges: track.isEnabled(), commentCount: docComments.length, ...countWords(editor) }); break;
-        case "setTitle": titleInput.value = String((m.args && m.args.title) || ""); scheduleSave(); reply({ ok: true }); break;
-        case "save": { const result = await formalSave("manual"); reply({ ok: true, rev: autosaver.rev, result }); break; }
-        case "close": { const result = await formalSave("close"); reply({ ok: true, rev: autosaver.rev, result }); break; }
-        case "loadDocument": reply({ ok: await loadDocument(m.args && m.args.id) }); break;
+          editor.focus();
+          restoreSelection(editor);
+          if (track.isEnabled())
+            track.insertHtml(sanitizeHtml((m.args && m.args.html) || ""));
+          else
+            insertHtmlAtCaret(
+              editor,
+              sanitizeHtml((m.args && m.args.html) || ""),
+            );
+          scheduleSave();
+          reply({ ok: true });
+          break;
+        case "getMeta":
+          reply({
+            id: current.id,
+            title: titleInput.value,
+            rev: autosaver.rev,
+            pageSetup: current.pageSetup,
+            trackChanges: track.isEnabled(),
+            commentCount: docComments.length,
+            ...countWords(editor),
+          });
+          break;
+        case "setTitle":
+          titleInput.value = String((m.args && m.args.title) || "");
+          scheduleSave();
+          reply({ ok: true });
+          break;
+        case "save": {
+          const result = await formalSave("manual");
+          reply({ ok: true, rev: autosaver.rev, result });
+          break;
+        }
+        case "close": {
+          const result = await formalSave("close");
+          reply({ ok: true, rev: autosaver.rev, result });
+          break;
+        }
+        case "loadDocument":
+          reply({ ok: await loadDocument(m.args && m.args.id) });
+          break;
         case "setMode": {
           const v = m.args && m.args.mode === "view";
           editor.contentEditable = v ? "false" : "true";
@@ -1626,98 +2245,235 @@ async function main() {
           reply({ ok: true });
           break;
         }
-        case "find": reply({ matches: findPanel.find((m.args && m.args.query) || "", m.args || {}) }); break;
-        case "replaceAll": reply({ replaced: findPanel.replaceAll((m.args && m.args.query) || "", (m.args && m.args.replacement) || "", m.args || {}) }); break;
-        case "focus": editor.focus(); reply({ ok: true }); break;
+        case "find":
+          reply({
+            matches: findPanel.find(
+              (m.args && m.args.query) || "",
+              m.args || {},
+            ),
+          });
+          break;
+        case "replaceAll":
+          reply({
+            replaced: findPanel.replaceAll(
+              (m.args && m.args.query) || "",
+              (m.args && m.args.replacement) || "",
+              m.args || {},
+            ),
+          });
+          break;
+        case "focus":
+          editor.focus();
+          reply({ ok: true });
+          break;
         case "addComment": {
           const text = ((m.args && m.args.text) || "").trim();
-          if (!text) { reply(null, "text required"); break; }
-          const cid = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-          if (!wrapSelectionComment(editor, cid)) { reply(null, "no selection to anchor the comment"); break; }
-          docComments.push({ id: cid, author: (m.args && m.args.author) || userName, text, createdAt: Date.now(), resolved: false, replies: [] });
+          if (!text) {
+            reply(null, "text required");
+            break;
+          }
+          const cid =
+            "c" +
+            Date.now().toString(36) +
+            Math.random().toString(36).slice(2, 5);
+          if (!wrapSelectionComment(editor, cid)) {
+            reply(null, "no selection to anchor the comment");
+            break;
+          }
+          docComments.push({
+            id: cid,
+            author: (m.args && m.args.author) || userName,
+            text,
+            createdAt: Date.now(),
+            resolved: false,
+            replies: [],
+          });
           renderComments();
           scheduleSave();
           reply({ id: cid });
           break;
         }
-        case "getComments": reply({ comments: docComments }); break;
-        case "setTrackChanges": track.setEnabled(!!(m.args && m.args.on)); syncTrackUI(); scheduleSave(); reply({ ok: true, on: track.isEnabled() }); break;
-        case "getChanges": reply({ changes: track.list().map(({ node, ...rest }) => rest) }); break;
-        case "acceptAllChanges": track.acceptAll(); scheduleSave(); reply({ ok: true }); break;
-        case "rejectAllChanges": track.rejectAll(); scheduleSave(); reply({ ok: true }); break;
-        case "undo": if (editHistory) editHistory.undo(); reply({ ok: true, canUndo: editHistory && editHistory.canUndo(), canRedo: editHistory && editHistory.canRedo() }); break;
-        case "redo": if (editHistory) editHistory.redo(); reply({ ok: true, canUndo: editHistory && editHistory.canUndo(), canRedo: editHistory && editHistory.canRedo() }); break;
-        case "canUndo": reply({ canUndo: !!(editHistory && editHistory.canUndo()), canRedo: !!(editHistory && editHistory.canRedo()) }); break;
+        case "getComments":
+          reply({ comments: docComments });
+          break;
+        case "setTrackChanges":
+          track.setEnabled(!!(m.args && m.args.on));
+          syncTrackUI();
+          scheduleSave();
+          reply({ ok: true, on: track.isEnabled() });
+          break;
+        case "getChanges":
+          reply({ changes: track.list().map(({ node, ...rest }) => rest) });
+          break;
+        case "acceptAllChanges":
+          track.acceptAll();
+          scheduleSave();
+          reply({ ok: true });
+          break;
+        case "rejectAllChanges":
+          track.rejectAll();
+          scheduleSave();
+          reply({ ok: true });
+          break;
+        case "undo":
+          if (editHistory) editHistory.undo();
+          reply({
+            ok: true,
+            canUndo: editHistory && editHistory.canUndo(),
+            canRedo: editHistory && editHistory.canRedo(),
+          });
+          break;
+        case "redo":
+          if (editHistory) editHistory.redo();
+          reply({
+            ok: true,
+            canUndo: editHistory && editHistory.canUndo(),
+            canRedo: editHistory && editHistory.canRedo(),
+          });
+          break;
+        case "canUndo":
+          reply({
+            canUndo: !!(editHistory && editHistory.canUndo()),
+            canRedo: !!(editHistory && editHistory.canRedo()),
+          });
+          break;
 
         // ---- formatting: execCommand-based ----
         case "format": {
           const cmd = String((m.args && m.args.cmd) || "");
-          const val = m.args && m.args.value != null ? String(m.args.value) : null;
-          if (!cmd || !/^[a-zA-Z]+$/.test(cmd)) { reply(null, "invalid format cmd"); break; }
+          const val =
+            m.args && m.args.value != null ? String(m.args.value) : null;
+          if (!cmd || !/^[a-zA-Z]+$/.test(cmd)) {
+            reply(null, "invalid format cmd");
+            break;
+          }
           editor.focus();
           let ok = false;
-          try { ok = document.execCommand(cmd, false, val); } catch (e) { reply(null, String(e.message || e)); break; }
-          scheduleSave(); schedulePaginate();
+          try {
+            ok = document.execCommand(cmd, false, val);
+          } catch (e) {
+            reply(null, String(e.message || e));
+            break;
+          }
+          scheduleSave();
+          schedulePaginate();
           reply({ ok, html: getCleanHtml() });
           break;
         }
         case "getSelectedText": {
           const sel = window.getSelection();
-          reply({ text: sel ? sel.toString() : "", html: sel && sel.rangeCount ? sel.getRangeAt(0).cloneContents().textContent : "" });
+          reply({
+            text: sel ? sel.toString() : "",
+            html:
+              sel && sel.rangeCount
+                ? sel.getRangeAt(0).cloneContents().textContent
+                : "",
+          });
           break;
         }
 
         // ---- inserts that don't need a dialog ----
         case "insertImage": {
           const src = String((m.args && m.args.src) || "");
-          if (!src) { reply(null, "src required"); break; }
+          if (!src) {
+            reply(null, "src required");
+            break;
+          }
           const alt = String((m.args && m.args.alt) || "");
-          const w = m.args && m.args.width != null ? Number(m.args.width) : null;
-          const h = m.args && m.args.height != null ? Number(m.args.height) : null;
+          const w =
+            m.args && m.args.width != null ? Number(m.args.width) : null;
+          const h =
+            m.args && m.args.height != null ? Number(m.args.height) : null;
           let img = `<img src="${src.replace(/"/g, "&quot;")}"${alt ? ` alt="${alt.replace(/"/g, "&quot;")}"` : ""}${w != null ? ` width="${w}"` : ""}${h != null ? ` height="${h}"` : ""}>`;
-          insertHtmlAtCaret(editor, img); scheduleSave(); schedulePaginate(); reply({ ok: true });
+          insertHtmlAtCaret(editor, img);
+          scheduleSave();
+          schedulePaginate();
+          reply({ ok: true });
           break;
         }
         case "insertLink": {
           const href = String((m.args && m.args.href) || "");
-          if (!href) { reply(null, "href required"); break; }
+          if (!href) {
+            reply(null, "href required");
+            break;
+          }
           const text = String((m.args && m.args.text) || href);
-          insertHtmlAtCaret(editor, `<a href="${href.replace(/"/g, "&quot;")}">${text.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c])}</a>`);
-          scheduleSave(); reply({ ok: true });
+          insertHtmlAtCaret(
+            editor,
+            `<a href="${href.replace(/"/g, "&quot;")}">${text.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c])}</a>`,
+          );
+          scheduleSave();
+          reply({ ok: true });
           break;
         }
         case "insertTable": {
-          const rows = Math.max(1, Math.min(50, parseInt(m.args && m.args.rows, 10) || 2));
-          const cols = Math.max(1, Math.min(20, parseInt(m.args && m.args.cols, 10) || 2));
-          let html = '<table><tbody>';
+          const rows = Math.max(
+            1,
+            Math.min(50, parseInt(m.args && m.args.rows, 10) || 2),
+          );
+          const cols = Math.max(
+            1,
+            Math.min(20, parseInt(m.args && m.args.cols, 10) || 2),
+          );
+          let html = "<table><tbody>";
           for (let r = 0; r < rows; r++) {
             html += "<tr>";
             for (let c = 0; c < cols; c++) html += "<td><br></td>";
             html += "</tr>";
           }
           html += "</tbody></table><p><br></p>";
-          insertHtmlAtCaret(editor, html); scheduleSave(); schedulePaginate(); reply({ ok: true });
+          insertHtmlAtCaret(editor, html);
+          scheduleSave();
+          schedulePaginate();
+          reply({ ok: true });
           break;
         }
         case "insertSymbol": {
           const ch = String((m.args && m.args.char) || "");
-          if (!ch) { reply(null, "char required"); break; }
-          insertTextAtCaret(editor, ch); scheduleSave(); reply({ ok: true });
+          if (!ch) {
+            reply(null, "char required");
+            break;
+          }
+          insertTextAtCaret(editor, ch);
+          scheduleSave();
+          reply({ ok: true });
           break;
         }
-        case "insertPageBreak": insertPageBreak(editor); scheduleSave(); reply({ ok: true }); break;
-        case "insertBlankPage": insertBlankPage(editor); scheduleSave(); reply({ ok: true }); break;
-        case "insertHr": insertHtmlAtCaret(editor, "<hr>"); scheduleSave(); reply({ ok: true }); break;
+        case "insertPageBreak":
+          insertPageBreak(editor);
+          scheduleSave();
+          reply({ ok: true });
+          break;
+        case "insertBlankPage":
+          insertBlankPage(editor);
+          scheduleSave();
+          reply({ ok: true });
+          break;
+        case "insertHr":
+          insertHtmlAtCaret(editor, "<hr>");
+          scheduleSave();
+          reply({ ok: true });
+          break;
 
         // ---- headers / footers / page numbers ----
-        case "setHeader": case "setFooter": {
+        case "setHeader":
+        case "setFooter": {
           const which = m.cmd === "setHeader" ? "header" : "footer";
           const ch = getChrome();
-          const text = (m.args && m.args.text != null) ? String(m.args.text) : null;
+          const text =
+            m.args && m.args.text != null ? String(m.args.text) : null;
           const align = (m.args && m.args.align) || "center";
           if (text === null || text === "") delete ch[which];
-          else ch[which] = { text, align: ["left", "center", "right"].includes(align) ? align : "center" };
-          schedulePaginate(); scheduleSave(); reply({ ok: true });
+          else
+            ch[which] = {
+              text,
+              align: ["left", "center", "right"].includes(align)
+                ? align
+                : "center",
+            };
+          schedulePaginate();
+          scheduleSave();
+          reply({ ok: true });
           break;
         }
         case "setPageNumbers": {
@@ -1730,7 +2486,9 @@ async function main() {
               place: (m.args && m.args.place) || "footer-center",
             };
           }
-          schedulePaginate(); scheduleSave(); reply({ ok: true });
+          schedulePaginate();
+          scheduleSave();
+          reply({ ok: true });
           break;
         }
 
@@ -1738,46 +2496,76 @@ async function main() {
         case "setPageSetup": {
           const s = current.pageSetup || { ...DEFAULT_PAGE_SETUP };
           const next = { ...s };
-          if (m.args && m.args.size && PAGE_INCHES[m.args.size]) next.size = m.args.size;
-          if (m.args && m.args.orientation) next.orientation = m.args.orientation;
+          if (m.args && m.args.size && PAGE_INCHES[m.args.size])
+            next.size = m.args.size;
+          if (m.args && m.args.orientation)
+            next.orientation = m.args.orientation;
           if (m.args && m.args.margins) {
-            next.margins = { ...(s.margins || DEFAULT_PAGE_SETUP.margins), ...m.args.margins };
+            next.margins = {
+              ...(s.margins || DEFAULT_PAGE_SETUP.margins),
+              ...m.args.margins,
+            };
           }
-          applyPageSetup(next); scheduleSave(); reply({ ok: true, pageSetup: next });
+          applyPageSetup(next);
+          scheduleSave();
+          reply({ ok: true, pageSetup: next });
           break;
         }
-        case "getPageSetup": reply({ pageSetup: current.pageSetup }); break;
+        case "getPageSetup":
+          reply({ pageSetup: current.pageSetup });
+          break;
         case "setZoom": {
           const z = parseFloat(m.args && m.args.zoom);
-          if (!isFinite(z) || z <= 0) { reply(null, "invalid zoom"); break; }
+          if (!isFinite(z) || z <= 0) {
+            reply(null, "invalid zoom");
+            break;
+          }
           const sel = $("zoom");
           if (sel) sel.value = String(z);
           $("page").style.zoom = String(z);
-          schedulePaginate(); reply({ ok: true, zoom: z });
+          schedulePaginate();
+          reply({ ok: true, zoom: z });
           break;
         }
-        case "getZoom": reply({ zoom: parseFloat(getComputedStyle($("page")).zoom) || 1 }); break;
+        case "getZoom":
+          reply({ zoom: parseFloat(getComputedStyle($("page")).zoom) || 1 });
+          break;
 
         // ---- library / versions ----
-        case "listDocuments": reply({ documents: await listDocuments() }); break;
+        case "listDocuments":
+          reply({ documents: await listDocuments() });
+          break;
         case "newDocument": {
           await autosaver.flush();
-          const meta = await createDocument(String((m.args && m.args.title) || t("doc.untitled")));
+          const meta = await createDocument(
+            String((m.args && m.args.title) || t("doc.untitled")),
+          );
           await loadDocument(meta.id);
           reply({ ok: true, id: meta.id });
           break;
         }
         case "deleteDocument": {
           const id = String((m.args && m.args.id) || "");
-          if (!id || id === current.id) { reply(null, "refusing to delete current doc; call newDocument first"); break; }
+          if (!id || id === current.id) {
+            reply(
+              null,
+              "refusing to delete current doc; call newDocument first",
+            );
+            break;
+          }
           await deleteDocument(id);
           reply({ ok: true });
           break;
         }
-        case "listVersions": reply({ versions: await listVersions(current.id) }); break;
+        case "listVersions":
+          reply({ versions: await listVersions(current.id) });
+          break;
         case "restoreVersion": {
           const idx = parseInt(m.args && m.args.index, 10);
-          if (!isFinite(idx)) { reply(null, "index required"); break; }
+          if (!isFinite(idx)) {
+            reply(null, "index required");
+            break;
+          }
           const doc = await restoreVersion(current.id, idx);
           autosaver.setRev(doc.rev);
           if (doc.title != null) titleInput.value = doc.title;
@@ -1795,19 +2583,46 @@ async function main() {
           const fmt = String((m.args && m.args.fmt) || "html");
           const title = (titleInput.value || "document").trim();
           try {
-            if (fmt === "docx") { const blob = await buildDocxFromHtml(getCleanHtml(), { title, pageSetup: current.pageSetup, comments: docComments }); saveAs(blob, title + ".docx"); }
-            else if (fmt === "html") { saveAs(new Blob([exportStandaloneHtml(getCleanHtml(), title)], { type: "text/html" }), title + ".html"); }
-            else if (fmt === "txt") { saveAs(new Blob([htmlToPlainText(getCleanHtml())], { type: "text/plain" }), title + ".txt"); }
-            else if (fmt === "pdf") { window.print(); }
-            else { reply(null, "unknown fmt: " + fmt); break; }
+            if (fmt === "docx") {
+              scheduleSave();
+              await autosaver.flush();
+              if (autosaver.lastError) throw autosaver.lastError;
+              const blob = await downloadDocumentFile(current.id, "docx");
+              saveAs(blob, title + ".docx");
+            } else if (fmt === "html") {
+              saveAs(
+                new Blob([exportStandaloneHtml(getCleanHtml(), title)], {
+                  type: "text/html",
+                }),
+                title + ".html",
+              );
+            } else if (fmt === "txt") {
+              saveAs(
+                new Blob([htmlToPlainText(getCleanHtml())], {
+                  type: "text/plain",
+                }),
+                title + ".txt",
+              );
+            } else if (fmt === "pdf") {
+              window.print();
+            } else {
+              reply(null, "unknown fmt: " + fmt);
+              break;
+            }
             setStatus("saved");
             reply({ ok: true });
-          } catch (e) { reply(null, String(e.message || e)); }
+          } catch (e) {
+            reply(null, String(e.message || e));
+          }
           break;
         }
-        case "previewPrint": window.print(); reply({ ok: true }); break;
+        case "previewPrint":
+          window.print();
+          reply({ ok: true });
+          break;
 
-        default: reply(null, "unknown command: " + m.cmd);
+        default:
+          reply(null, "unknown command: " + m.cmd);
       }
     } catch (e) {
       reply(null, String(e.message || e));
@@ -1824,6 +2639,15 @@ main().catch((e) => {
   console.error(e);
   setStatus("error");
   if (window.parent !== window) {
-    try { window.parent.postMessage({ we: 1, event: "error", data: { message: String(e.message || e), operation: "initialize" } }, "*"); } catch {}
+    try {
+      window.parent.postMessage(
+        {
+          we: 1,
+          event: "error",
+          data: { message: String(e.message || e), operation: "initialize" },
+        },
+        "*",
+      );
+    } catch {}
   }
 });

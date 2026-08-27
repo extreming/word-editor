@@ -101,6 +101,17 @@ export async function putDocx(id, blob) {
     body: JSON.stringify({ data: b64 }),
   });
 }
+export async function downloadDocumentFile(id, fmt = "docx") {
+  const headers = {};
+  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  const response = await fetch(`${API}/${encodeURIComponent(id)}/export?fmt=${encodeURIComponent(fmt)}`, { headers });
+  if (!response.ok) {
+    let detail = "";
+    try { detail = (await response.json()).error || ""; } catch {}
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+  return response.blob();
+}
 export async function importDocxFile(file) {
   const b64 = await blobToBase64(file);
   return req(`${API}/import`, {

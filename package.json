@@ -4,7 +4,7 @@
   "description": "A browser-based, Word-compatible rich-text editor. The zero-build vanilla JavaScript client includes hand-written OOXML mapping, while the Node server reuses the same DOCX parser through a jsdom DOM shim and keeps editor working data in a local directory.",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test tests/*.test.mjs",
     "start": "node server.js"
   },
   "repository": {

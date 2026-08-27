@@ -15,6 +15,7 @@ const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+const MATH = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 
 export function supportsDocx() {
   return typeof DecompressionStream !== "undefined" && typeof CompressionStream !== "undefined";
@@ -231,6 +232,23 @@ function bytesToDataUrl(bytes, mime) {
   }
   return `data:${mime};base64,${btoa(bin)}`;
 }
+function utf8ToBase64(value) {
+  const bytes = new TextEncoder().encode(value);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+function base64ToUtf8(value) {
+  try {
+    const bin = atob(value || "");
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  } catch { return ""; }
+}
 function dataUrlToBytes(url) {
   const i = url.indexOf(",");
   const meta = url.slice(5, i);
@@ -286,7 +304,7 @@ function parseRels(files, relPath) {
 }
 
 function parseNumbering(files) {
-  // numId -> { ilvl -> "bullet" | "decimal" | ... }
+  // numId -> { ilvl -> { fmt, start } }
   const text = decodePart(files, "word/numbering.xml");
   const fmtByNum = new Map();
   if (!text) return fmtByNum;
@@ -298,7 +316,11 @@ function parseNumbering(files) {
     for (const lvl of children(ab, W, "lvl")) {
       const ilvl = lvl.getAttributeNS(W, "ilvl") ?? lvl.getAttribute("w:ilvl");
       const numFmt = child(lvl, W, "numFmt");
-      levels[ilvl] = numFmt ? attr(numFmt, "val") : "decimal";
+      const start = child(lvl, W, "start");
+      levels[ilvl] = {
+        fmt: numFmt ? attr(numFmt, "val") : "decimal",
+        start: start ? parseInt(attr(start, "val"), 10) || 1 : 1,
+      };
     }
     abstracts.set(id, levels);
   }
@@ -306,7 +328,17 @@ function parseNumbering(files) {
     const numId = num.getAttributeNS(W, "numId") ?? num.getAttribute("w:numId");
     const absRef = child(num, W, "abstractNumId");
     const absId = absRef ? attr(absRef, "val") : null;
-    fmtByNum.set(numId, abstracts.get(absId) || {});
+    const levels = Object.fromEntries(Object.entries(abstracts.get(absId) || {})
+      .map(([level, value]) => [level, { ...value }]));
+    for (const override of children(num, W, "lvlOverride")) {
+      const ilvl = override.getAttributeNS(W, "ilvl") ?? override.getAttribute("w:ilvl");
+      const startOverride = child(override, W, "startOverride");
+      if (startOverride) {
+        levels[ilvl] = levels[ilvl] || { fmt: "decimal", start: 1 };
+        levels[ilvl].start = parseInt(attr(startOverride, "val"), 10) || 1;
+      }
+    }
+    fmtByNum.set(numId, levels);
   }
   return fmtByNum;
 }
@@ -364,17 +396,24 @@ function resolveTarget(target) {
   return out.join("/");
 }
 
-function imageFromDrawing(node, ctx) {
+function relationshipImagePart(node, ctx) {
   const blip = findDesc(node, "blip");
-  if (!blip) return "";
-  const embed = blip.getAttributeNS(R, "embed") || blip.getAttribute("r:embed");
-  const rel = embed && ctx.rels.get(embed);
+  const imageData = findDesc(node, "imagedata");
+  const relId = (blip && (blip.getAttributeNS(R, "embed") || blip.getAttribute("r:embed")))
+    || (imageData && (imageData.getAttributeNS(R, "id") || imageData.getAttribute("r:id")));
+  const rel = relId && ctx.rels.get(relId);
   if (!rel) return "";
   const partName = resolveTarget(rel.target);
   const data = ctx.files.get(partName);
   if (!data) return "";
   const ext = (partName.split(".").pop() || "").toLowerCase();
-  const mime = IMG_MIME[ext];
+  return { data, ext, mime: IMG_MIME[ext], partName };
+}
+
+function imageFromDrawing(node, ctx) {
+  const image = relationshipImagePart(node, ctx);
+  if (!image) return "";
+  const { data, mime } = image;
   if (!mime) return ""; // emf/wmf etc. — browser can't render
   let style = "";
   const extent = findDesc(node, "extent");
@@ -388,12 +427,141 @@ function imageFromDrawing(node, ctx) {
   return `<img src="${bytesToDataUrl(data, mime)}"${style} alt="">`;
 }
 
+function serializeXmlNode(node) {
+  return new XMLSerializer().serializeToString(node);
+}
+
+function relationshipImage(node, ctx) {
+  const image = relationshipImagePart(node, ctx);
+  if (!image) return null;
+  const { data, mime } = image;
+  if (!mime || mime === "image/tiff") return null;
+  let size = "";
+  const extent = findDesc(node, "extent");
+  if (extent) {
+    const cx = parseInt(extent.getAttribute("cx"), 10);
+    const cy = parseInt(extent.getAttribute("cy"), 10);
+    if (cx > 0 && cy > 0) size = ` width="${Math.round(cx / EMU_PER_PX)}" height="${Math.round(cy / EMU_PER_PX)}"`;
+  }
+  return `<img src="${bytesToDataUrl(data, mime)}"${size} alt="">`;
+}
+
+function complexObjectKind(node) {
+  const local = node.localName;
+  if (node.namespaceURI === MATH || local === "oMath" || local === "oMathPara" || findDesc(node, "oMath")) return "formula";
+  if (local === "object" || findDesc(node, "OLEObject")) return "embedded";
+  if (findDesc(node, "relIds")) return "smartart";
+  if (findDesc(node, "chart")) return "chart";
+  // Modern WordArt is stored as a DrawingML text box rather than the legacy
+  // VML textpath. Text fill/outline/warp properties identify that native form.
+  if (findDesc(node, "textpath") || findDesc(node, "textFill")
+      || findDesc(node, "textOutline") || findDesc(node, "prstTxWarp")) return "wordart";
+  if (local === "pict" || findDesc(node, "shape")) return "shape";
+  if (local === "drawing" || local === "AlternateContent") return "drawing";
+  return null;
+}
+
+function isPlainPictureDrawing(node) {
+  return node.localName === "drawing" && !!findDesc(node, "pic") && !!findDesc(node, "blip")
+    && !findDesc(node, "relIds") && !findDesc(node, "chart");
+}
+
+const COMPLEX_LABELS = {
+  formula: "Formula · read-only", embedded: "Embedded object · read-only",
+  smartart: "SmartArt · read-only", chart: "Chart · read-only",
+  wordart: "WordArt · read-only", shape: "Shape · read-only", drawing: "Drawing · read-only",
+  image: "Image · read-only",
+};
+
+function mathChild(node, name) {
+  return [...node.children].find((childNode) => childNode.localName === name) || null;
+}
+function mathValue(node, fallback = "") {
+  return node && (node.getAttribute("m:val") || node.getAttribute("val")) || fallback;
+}
+function ommlToHtml(node) {
+  if (!node) return "";
+  const local = node.localName;
+  if (local === "t") return escHtml(node.textContent || "");
+  if (local === "f") {
+    return `<span class="omml-frac"><span class="omml-num">${ommlToHtml(mathChild(node, "num"))}</span>` +
+      `<span class="omml-den">${ommlToHtml(mathChild(node, "den"))}</span></span>`;
+  }
+  if (local === "rad") {
+    const degree = ommlToHtml(mathChild(node, "deg"));
+    return `<span class="omml-rad">${degree ? `<sup>${degree}</sup>` : ""}√<span class="omml-radicand">${ommlToHtml(mathChild(node, "e"))}</span></span>`;
+  }
+  if (local === "sSup") return `${ommlToHtml(mathChild(node, "e"))}<sup>${ommlToHtml(mathChild(node, "sup"))}</sup>`;
+  if (local === "sSub") return `${ommlToHtml(mathChild(node, "e"))}<sub>${ommlToHtml(mathChild(node, "sub"))}</sub>`;
+  if (local === "sSubSup") return `${ommlToHtml(mathChild(node, "e"))}<sub>${ommlToHtml(mathChild(node, "sub"))}</sub><sup>${ommlToHtml(mathChild(node, "sup"))}</sup>`;
+  if (local === "d") {
+    const dPr = mathChild(node, "dPr");
+    const begin = mathValue(dPr && mathChild(dPr, "begChr"), "(");
+    const end = mathValue(dPr && mathChild(dPr, "endChr"), ")");
+    return `${escHtml(begin)}${ommlToHtml(mathChild(node, "e"))}${escHtml(end)}`;
+  }
+  if (local === "nary") {
+    const naryPr = mathChild(node, "naryPr");
+    const symbol = mathValue(naryPr && mathChild(naryPr, "chr"), "∫");
+    return `<span class="omml-nary">${escHtml(symbol)}<span class="omml-limits"><sup>${ommlToHtml(mathChild(node, "sup"))}</sup><sub>${ommlToHtml(mathChild(node, "sub"))}</sub></span>${ommlToHtml(mathChild(node, "e"))}</span>`;
+  }
+  if (local === "m") {
+    const rows = [...node.children].filter((childNode) => childNode.localName === "mr");
+    return `<span class="omml-matrix">${rows.map((row) => `<span class="omml-row">${[...row.children].filter((cell) => cell.localName === "e").map((cell) => `<span class="omml-cell">${ommlToHtml(cell)}</span>`).join("")}</span>`).join("")}</span>`;
+  }
+  return [...node.children].map(ommlToHtml).join("");
+}
+
+function complexObjectHtml(node, ctx, rawXml, options = {}) {
+  const kind = options.kind || complexObjectKind(node) || "drawing";
+  const formulaPreview = kind === "formula" ? ommlToHtml(node) : "";
+  const preview = relationshipImage(node, ctx)
+    || (formulaPreview ? `<span class="ooxml-formula-preview">${formulaPreview}</span>` : "");
+  let detail = options.detail || "";
+  if (kind === "formula") detail = String(node.textContent || "").replace(/\s+/g, " ").trim();
+  if (kind === "wordart") {
+    const textpath = findDesc(node, "textpath");
+    const textBox = findDesc(node, "txbxContent");
+    const textBoxText = textBox
+      ? [...textBox.getElementsByTagNameNS(W, "t")].map((textNode) => textNode.textContent || "").join("") : "";
+    detail = textpath && (textpath.getAttribute("string") || textpath.getAttribute("v:string"))
+      || textBoxText.replace(/\s+/g, " ").trim() || detail;
+  }
+  if (kind === "embedded") {
+    const ole = findDesc(node, "OLEObject");
+    detail = ole && (ole.getAttribute("ProgID") || ole.getAttribute("Type")) || detail;
+  }
+  detail = detail ? `: ${detail.slice(0, 120)}` : "";
+  const label = `${COMPLEX_LABELS[kind] || COMPLEX_LABELS.drawing}${detail}`;
+  const classes = `ooxml-object ooxml-${kind}${options.anchored ? " ooxml-anchored" : ""}${preview ? " has-preview" : ""}`;
+  return `<span class="${classes}" data-ooxml-kind="${kind}" data-ooxml="${utf8ToBase64(rawXml)}" contenteditable="false" title="${escXml(label)}">` +
+    `${preview || ""}<span class="ooxml-object-label">${escHtml(label)}</span></span>`;
+}
+
+function preservedRunObjectHtml(run, childNode, ctx, options) {
+  const rPr = child(run, W, "rPr");
+  const raw = `<w:r xmlns:w="${W}">${rPr ? serializeXmlNode(rPr) : ""}${serializeXmlNode(childNode)}</w:r>`;
+  return complexObjectHtml(childNode, ctx, raw, options);
+}
+
+function isAnchoredWordArt(node) {
+  return complexObjectKind(node) === "wordart" && !!findDesc(node, "anchor");
+}
+
 function runToHtml(r, ctx) {
   const rPr = child(r, W, "rPr");
   let out = "";
   let pageBreak = false;
+  let deferred = "";
   const segs = [];
   for (const c of r.children) {
+    if (c.localName === "AlternateContent") {
+      const anchored = isAnchoredWordArt(c);
+      const objectHtml = preservedRunObjectHtml(r, c, ctx, anchored ? { anchored: true } : undefined);
+      if (anchored) deferred += objectHtml;
+      else segs.push({ raw: objectHtml });
+      continue;
+    }
     if (c.namespaceURI !== W && c.localName !== "drawing") continue;
     if (c.localName === "t") segs.push({ t: c.textContent });
     else if (c.localName === "delText") segs.push({ t: c.textContent });
@@ -403,7 +571,28 @@ function runToHtml(r, ctx) {
       if (type === "page") pageBreak = true;
       else segs.push({ br: true });
     }
-    else if (c.localName === "drawing") segs.push({ raw: imageFromDrawing(c, ctx) });
+    else if (c.localName === "drawing") {
+      if (!isPlainPictureDrawing(c)) {
+        const anchored = isAnchoredWordArt(c);
+        const objectHtml = preservedRunObjectHtml(r, c, ctx, anchored ? { anchored: true } : undefined);
+        if (anchored) deferred += objectHtml;
+        else segs.push({ raw: objectHtml });
+      } else {
+        const rendered = imageFromDrawing(c, ctx);
+        if (rendered) segs.push({ raw: rendered });
+        else {
+          const image = relationshipImagePart(c, ctx);
+          const format = image && image.ext ? image.ext.toUpperCase() : "unsupported";
+          segs.push({ raw: preservedRunObjectHtml(r, c, ctx, {
+            kind: "image",
+            detail: `${format} preview unavailable in browser`,
+          }) });
+        }
+      }
+    }
+    else if (c.localName === "object" || c.localName === "pict") {
+      segs.push({ raw: preservedRunObjectHtml(r, c, ctx) });
+    }
     else if (c.localName === "noBreakHyphen") segs.push({ t: "‑" });
   }
   let open = "", close = "";
@@ -453,19 +642,32 @@ function runToHtml(r, ctx) {
     if (seg.br) { out += "<br>"; continue; }
     out += open + escHtml(seg.t).replace(/\t/g, "&nbsp;&nbsp;&nbsp;&nbsp;") + close;
   }
-  return { html: out, pageBreak };
+  return { html: out, pageBreak, deferred };
 }
 
 // Processes inline-level children of a paragraph (runs, hyperlinks, tracked
 // changes, comment range markers) into HTML.
 function inlineToHtml(parent, ctx) {
   let html = "";
+  let deferred = "";
   let pageBreak = false;
   for (const node of parent.children) {
+    if (node.namespaceURI === MATH || node.localName === "oMath" || node.localName === "oMathPara") {
+      html += complexObjectHtml(node, ctx, serializeXmlNode(node));
+      continue;
+    }
+    if (node.localName === "AlternateContent") {
+      const anchored = isAnchoredWordArt(node);
+      const objectHtml = complexObjectHtml(node, ctx, serializeXmlNode(node), anchored ? { anchored: true } : undefined);
+      if (anchored) deferred += objectHtml;
+      else html += objectHtml;
+      continue;
+    }
     if (node.namespaceURI !== W) continue;
     if (node.localName === "r") {
       const r = runToHtml(node, ctx);
       html += r.html;
+      deferred += r.deferred;
       pageBreak = pageBreak || r.pageBreak;
     } else if (node.localName === "hyperlink") {
       const id = node.getAttributeNS(R, "id") || node.getAttribute("r:id");
@@ -500,7 +702,7 @@ function inlineToHtml(parent, ctx) {
       pageBreak = pageBreak || inner.pageBreak;
     }
   }
-  return { html, pageBreak };
+  return { html: html + deferred, pageBreak };
 }
 
 function paragraphStyleInfo(p, ctx) {
@@ -787,14 +989,21 @@ function parseSectPr(sectPr, ctx) {
   const setup = JSON.parse(JSON.stringify(DEFAULT_PAGE_SETUP));
   const pgSz = child(sectPr, W, "pgSz");
   if (pgSz) {
-    let w = parseInt(pgSz.getAttributeNS(W, "w") ?? pgSz.getAttribute("w:w"), 10) || 12240;
-    let h = parseInt(pgSz.getAttributeNS(W, "h") ?? pgSz.getAttribute("w:h"), 10) || 15840;
+    const w = parseInt(pgSz.getAttributeNS(W, "w") ?? pgSz.getAttribute("w:w"), 10) || 12240;
+    const h = parseInt(pgSz.getAttributeNS(W, "h") ?? pgSz.getAttribute("w:h"), 10) || 15840;
     const orient = pgSz.getAttributeNS(W, "orient") ?? pgSz.getAttribute("w:orient");
-    setup.orientation = orient === "landscape" ? "landscape" : "portrait";
-    if (setup.orientation === "landscape") [w, h] = [h, w];
+    // pgSz width/height describe the physical sheet.  Some Word producers
+    // incorrectly leave orient="landscape" on portrait dimensions (or the
+    // reverse). Trust the dimensions when they are unambiguous and use the
+    // attribute only for a square/custom sheet.  Normalising to portrait
+    // dimensions also lets A4/Letter recognition work in either orientation.
+    setup.orientation = w > h ? "landscape" : h > w ? "portrait"
+      : (orient === "landscape" ? "landscape" : "portrait");
+    const portraitW = Math.min(w, h);
+    const portraitH = Math.max(w, h);
     setup.size = "Letter";
     for (const [name, dim] of Object.entries(PAGE_SIZES)) {
-      if (Math.abs(dim.w - w) < 30 && Math.abs(dim.h - h) < 30) { setup.size = name; break; }
+      if (Math.abs(dim.w - portraitW) < 30 && Math.abs(dim.h - portraitH) < 30) { setup.size = name; break; }
     }
   }
   const pgMar = child(sectPr, W, "pgMar");
@@ -847,15 +1056,35 @@ export async function importDocx(fileOrBuffer) {
 
   // First pass: flat list of blocks, list items tagged with (numId, ilvl).
   const items = [];
+  const listCounters = new Map();
+  function nextListOrdinal(numId, ilvl, start) {
+    const key = `${numId}:${ilvl}`;
+    const value = listCounters.has(key) ? listCounters.get(key) + 1 : start;
+    listCounters.set(key, value);
+    for (const otherKey of [...listCounters.keys()]) {
+      const separator = otherKey.lastIndexOf(":");
+      if (otherKey.slice(0, separator) === String(numId)
+          && Number(otherKey.slice(separator + 1)) > ilvl) listCounters.delete(otherKey);
+    }
+    return value;
+  }
   let pageSetup = null;
   for (const node of body.children) {
+    if (node.namespaceURI === MATH || node.localName === "oMathPara") {
+      items.push({ html: `<p>${complexObjectHtml(node, ctx, serializeXmlNode(node))}</p>` });
+      continue;
+    }
     if (node.namespaceURI !== W) continue;
     if (node.localName === "p") {
       const info = paragraphStyleInfo(node, ctx);
       if (info.numId != null && ctx.numFmt.has(info.numId)) {
-        const fmt = (ctx.numFmt.get(info.numId) || {})[String(info.ilvl)] || "decimal";
+        const level = (ctx.numFmt.get(info.numId) || {})[String(info.ilvl)] || { fmt: "decimal", start: 1 };
         const inner = inlineToHtml(node, ctx);
-        items.push({ li: true, ilvl: Math.min(info.ilvl, 8), tag: fmt === "bullet" ? "ul" : "ol", html: inner.html || "<br>" });
+        items.push({
+          li: true, ilvl: Math.min(info.ilvl, 8), numId: info.numId,
+          ordinal: nextListOrdinal(info.numId, info.ilvl, level.start),
+          tag: level.fmt === "bullet" ? "ul" : "ol", html: inner.html || "<br>",
+        });
       } else if (info.listTag) {
         const inner = inlineToHtml(node, ctx);
         items.push({ li: true, ilvl: Math.min(info.ilvl, 8), tag: info.listTag, html: inner.html || "<br>" });
@@ -872,7 +1101,7 @@ export async function importDocx(fileOrBuffer) {
   // Second pass: assemble nested lists.
   let html = "";
   const stack = [];
-  const closeOne = () => { html += `</${stack.pop()}>`; };
+  const closeOne = () => { html += `</${stack.pop().tag}>`; };
   for (const item of items) {
     if (!item.li) {
       while (stack.length) closeOne();
@@ -880,8 +1109,16 @@ export async function importDocx(fileOrBuffer) {
       continue;
     }
     while (stack.length > item.ilvl + 1) closeOne();
-    if (stack.length === item.ilvl + 1 && stack[stack.length - 1] !== item.tag) closeOne();
-    while (stack.length < item.ilvl + 1) { html += `<${item.tag}>`; stack.push(item.tag); }
+    if (stack.length === item.ilvl + 1) {
+      const current = stack[stack.length - 1];
+      if (current.tag !== item.tag || current.numId !== item.numId) closeOne();
+    }
+    while (stack.length < item.ilvl + 1) {
+      const atItemLevel = stack.length === item.ilvl;
+      const start = atItemLevel && item.tag === "ol" && item.ordinal > 1 ? ` start="${item.ordinal}"` : "";
+      html += `<${item.tag}${start}>`;
+      stack.push({ tag: item.tag, numId: item.numId });
+    }
     html += `<li>${item.html}</li>`;
   }
   while (stack.length) closeOne();
@@ -1004,6 +1241,16 @@ function collectRuns(node, props, runs) {
     if (kid.nodeType !== 1) continue;
     const el = kid;
     const tag = el.tagName.toLowerCase();
+    if (tag === "span" && el.classList.contains("ooxml-object")) {
+      const rawOoxml = base64ToUtf8(el.getAttribute("data-ooxml") || "");
+      // Only XML fragments created by the importer are accepted.  Reject XML
+      // declarations/DTDs and limit roots to the inline structures we emit.
+      if (rawOoxml && !/<\?(?:xml)|<!DOCTYPE/i.test(rawOoxml)
+          && /^\s*<(?:w:r\b|m:oMath(?:Para)?\b|mc:AlternateContent\b)/.test(rawOoxml)) {
+        runs.push({ ...props, rawOoxml });
+      }
+      continue;
+    }
     let np = { ...props };
     if (tag === "b" || tag === "strong") np.b = true;
     else if (tag === "i" || tag === "em") np.i = true;
@@ -1086,6 +1333,7 @@ function imageRunXml(run, ctx) {
 }
 
 function runToXml(run, ctx, opts = {}) {
+  if (run.rawOoxml) return run.rawOoxml;
   if (run.img) return imageRunXml(run, ctx);
   if (run.br) return run.pb ? `<w:r><w:br w:type="page"/></w:r>` : `<w:r><w:br/></w:r>`;
   // deleted runs must use w:delText instead of w:t
@@ -1206,7 +1454,11 @@ function paragraphToXml(el, ctx, extraPPr = []) {
 function listToXml(listEl, ctx, ilvl, numId) {
   const tag = listEl.tagName.toLowerCase();
   if (numId == null) {
-    if (tag === "ol") { numId = ctx.nextNumId++; ctx.nums.push({ numId, abstract: 1 }); }
+    if (tag === "ol") {
+      numId = ctx.nextNumId++;
+      const start = parseInt(listEl.getAttribute("start"), 10) || 1;
+      ctx.nums.push({ numId, abstract: 1, start, ilvl: Math.min(ilvl, 8) });
+    }
     else numId = 1; // shared bullet numbering
   }
   let out = "";
@@ -1356,7 +1608,7 @@ function blockToXml(el, ctx) {
 
 // ---- image collection (async: sizes + bytes) ----
 async function collectImages(container, ctx) {
-  const imgs = [...container.querySelectorAll("img")];
+  const imgs = [...container.querySelectorAll("img")].filter((img) => !img.closest(".ooxml-object"));
   let n = 0;
   for (const img of imgs) {
     try {
@@ -1390,7 +1642,7 @@ async function collectImages(container, ctx) {
       const MAXW = 624;
       if (w > MAXW) { h = h * (MAXW / w); w = MAXW; }
       n++;
-      const name = `image${n}.${ext}`;
+      const name = ctx.baseFiles ? uniqueWordPart(ctx, "editorImage", ext) : `image${n}.${ext}`;
       const relId = "rId" + ctx.nextRelId++;
       ctx.rels.push(`<Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${name}"/>`);
       ctx.media.push({ name, bytes, ext });
@@ -1402,7 +1654,47 @@ async function collectImages(container, ctx) {
 }
 
 // ---- package parts ----
-function contentTypesXml(ctx) {
+function decodeBytes(bytes) {
+  return bytes ? new TextDecoder().decode(bytes) : "";
+}
+
+function relationshipMaxId(files) {
+  const xml = decodeBytes(files && files.get("word/_rels/document.xml.rels"));
+  let max = 9;
+  for (const m of xml.matchAll(/\bId=["']rId(\d+)["']/g)) max = Math.max(max, parseInt(m[1], 10));
+  return max;
+}
+
+function uniqueWordPart(ctx, stem, ext) {
+  let index = 1;
+  let name;
+  do { name = `${stem}${index++}.${ext}`; }
+  while ((ctx.baseFiles && ctx.baseFiles.has(`word/${name}`))
+    || ctx.media.some((m) => m.name === name)
+    || ctx.headerFooterFiles.some((f) => f.name === name));
+  return name;
+}
+
+function mergeXmlChildren(baseText, generatedText, keyFor) {
+  if (!baseText) return generatedText;
+  try {
+    const base = parseXml(baseText);
+    const generated = parseXml(generatedText);
+    const root = base.documentElement;
+    const seen = new Set([...root.children].map(keyFor).filter(Boolean));
+    for (const node of generated.documentElement.children) {
+      const key = keyFor(node);
+      if (key && seen.has(key)) continue;
+      root.appendChild(base.importNode(node, true));
+      if (key) seen.add(key);
+    }
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${serializeXmlNode(root)}`;
+  } catch {
+    return generatedText;
+  }
+}
+
+function contentTypesXml(ctx, baseText = "") {
   const exts = new Set(ctx.media.map((m) => m.ext));
   let defaults = "";
   for (const e of exts) {
@@ -1415,7 +1707,7 @@ function contentTypesXml(ctx) {
   const chromeOverrides = (ctx.headerFooterFiles || []).map((f) =>
     `<Override PartName="/word/${f.name}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${f.name.startsWith("header") ? "header" : "footer"}+xml"/>`
   ).join("");
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+  const generated = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="xml" ContentType="application/xml"/>` + defaults +
@@ -1426,6 +1718,9 @@ function contentTypesXml(ctx) {
     `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
     `<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>` +
     `</Types>`;
+  return mergeXmlChildren(baseText, generated, (node) =>
+    node.localName === "Default" ? `D:${node.getAttribute("Extension")}`
+      : node.localName === "Override" ? `O:${node.getAttribute("PartName")}` : "");
 }
 
 const PKG_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1435,17 +1730,27 @@ const PKG_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
 </Relationships>`;
 
-function docRelsXml(ctx) {
+function docRelsXml(ctx, baseText = "") {
+  const stylesId = baseText ? `rId${ctx.nextRelId++}` : "rId1";
+  const numberingId = baseText ? `rId${ctx.nextRelId++}` : "rId2";
+  const commentsId = baseText ? `rId${ctx.nextRelId++}` : "rId3";
   const commentsRel = ctx.commentIds.size
-    ? `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>`
+    ? `<Relationship Id="${commentsId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>`
     : "";
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+  const generated = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
-    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
-    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>` +
+    `<Relationship Id="${stylesId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+    `<Relationship Id="${numberingId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>` +
     commentsRel +
     ctx.rels.join("") +
     `</Relationships>`;
+  return mergeXmlChildren(baseText, generated, (node) => {
+    const type = node.getAttribute("Type") || "";
+    // styles/numbering/comments are singleton semantic relationships; newly
+    // allocated image/link/header relationships are keyed by their unique Id.
+    if (/\/(?:styles|numbering|comments)$/.test(type)) return `T:${type}`;
+    return `I:${node.getAttribute("Id")}`;
+  });
 }
 
 function commentsXml(ctx) {
@@ -1492,7 +1797,9 @@ function numberingXml(ctx) {
   }
   let nums = `<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>`;
   for (const n of ctx.nums) {
-    nums += `<w:num w:numId="${n.numId}"><w:abstractNumId w:val="${n.abstract}"/></w:num>`;
+    const startOverride = n.start > 1
+      ? `<w:lvlOverride w:ilvl="${n.ilvl || 0}"><w:startOverride w:val="${n.start}"/></w:lvlOverride>` : "";
+    nums += `<w:num w:numId="${n.numId}"><w:abstractNumId w:val="${n.abstract}"/>${startOverride}</w:num>`;
   }
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<w:numbering xmlns:w="${W}">` +
@@ -1577,7 +1884,9 @@ function registerHeaderFooter(ctx, kind, chrome) {
     : null;
   const textEntry = chrome[kind]; // chrome.header | chrome.footer
   if (!textEntry && !pn) return "";
-  const partName = kind === "header" ? "header1.xml" : "footer1.xml";
+  const partName = ctx.baseFiles
+    ? uniqueWordPart(ctx, kind === "header" ? "headerEditor" : "footerEditor", "xml")
+    : (kind === "header" ? "header1.xml" : "footer1.xml");
   const rootTag = kind === "header" ? "hdr" : "ftr";
   const relType = `http://schemas.openxmlformats.org/officeDocument/2006/relationships/${kind}`;
   const relId = "rId" + ctx.nextRelId++;
@@ -1628,14 +1937,20 @@ function domToDocumentXml(container, ctx, pageSetup) {
 
 export async function buildDocxFromHtml(html, opts = {}) {
   const enc = new TextEncoder();
+  let baseFiles = null;
+  if (opts.baseDocx) {
+    try { baseFiles = await unzip(opts.baseDocx); }
+    catch (e) { console.warn("base DOCX could not be opened; exporting a new package:", e.message); }
+  }
   const ctx = {
     rels: [], media: [], images: new Map(),
-    hrefRels: new Map(), nextRelId: 10,
+    hrefRels: new Map(), nextRelId: baseFiles ? relationshipMaxId(baseFiles) + 1 : 10,
     nums: [], nextNumId: 2,
     revId: 1,
     commentMeta: new Map((opts.comments || []).map((c) => [c.id, c])),
     commentIds: new Map(),
     headerFooterFiles: [],
+    baseFiles,
   };
   ctx.commentId = (cid) => {
     if (!ctx.commentMeta.has(cid)) return null;
@@ -1646,16 +1961,15 @@ export async function buildDocxFromHtml(html, opts = {}) {
   container.innerHTML = html || "<p></p>";
   await collectImages(container, ctx);
   const documentXml = domToDocumentXml(container, ctx, opts.pageSetup);
-  const files = new Map([
-    ["[Content_Types].xml", enc.encode(contentTypesXml(ctx))],
-    ["_rels/.rels", enc.encode(PKG_RELS)],
-    ["word/document.xml", enc.encode(documentXml)],
-    ["word/_rels/document.xml.rels", enc.encode(docRelsXml(ctx))],
-    ["word/styles.xml", enc.encode(STYLES)],
-    ["word/numbering.xml", enc.encode(numberingXml(ctx))],
-    ["docProps/core.xml", enc.encode(coreXml(opts.title))],
-    ["docProps/app.xml", enc.encode(APP_XML)],
-  ]);
+  const files = baseFiles ? new Map(baseFiles) : new Map();
+  files.set("[Content_Types].xml", enc.encode(contentTypesXml(ctx, decodeBytes(baseFiles && baseFiles.get("[Content_Types].xml")))));
+  if (!files.has("_rels/.rels")) files.set("_rels/.rels", enc.encode(PKG_RELS));
+  files.set("word/document.xml", enc.encode(documentXml));
+  files.set("word/_rels/document.xml.rels", enc.encode(docRelsXml(ctx, decodeBytes(baseFiles && baseFiles.get("word/_rels/document.xml.rels")))));
+  files.set("word/styles.xml", enc.encode(STYLES));
+  files.set("word/numbering.xml", enc.encode(numberingXml(ctx)));
+  files.set("docProps/core.xml", enc.encode(coreXml(opts.title)));
+  files.set("docProps/app.xml", enc.encode(APP_XML));
   if (ctx.commentIds.size) files.set("word/comments.xml", enc.encode(commentsXml(ctx)));
   for (const f of ctx.headerFooterFiles) files.set("word/" + f.name, enc.encode(f.xml));
   for (const m of ctx.media) files.set("word/media/" + m.name, m.bytes);

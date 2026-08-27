@@ -226,7 +226,9 @@ function selectedBlocks(editor) {
 // HTML sanitizer (paste + loaded content)
 // ---------------------------------------------------------------
 const ALLOWED = {
-  p: [], div: [], br: [], hr: [], span: ["data-cid"], font: ["face", "size", "color"],
+  p: [], div: [], br: [], hr: [],
+  span: ["data-cid", "data-ooxml", "data-ooxml-kind", "contenteditable", "title"],
+  font: ["face", "size", "color"],
   b: [], strong: [], i: [], em: [], u: [], s: [], strike: [],
   ins: ["data-author", "data-ts"], del: ["data-author", "data-ts"],
   sub: [], sup: [], mark: [], code: [], kbd: [], samp: [], tt: [], pre: [],
@@ -248,9 +250,9 @@ const ALLOWED_STYLES = new Set([
   // free-floating shape objects
   "position", "left", "top", "right", "bottom", "z-index",
 ]);
-const KEEP_CLASSES = ["page-break", "pb", "comment-ref", "resolved", "tc-ins", "tc-del", "wordart", "shape"];
+const KEEP_CLASSES = ["page-break", "pb", "comment-ref", "resolved", "tc-ins", "tc-del", "wordart", "shape", "ooxml-object", "ooxml-object-label", "has-preview"];
 // classes matching these prefixes are also preserved (WordArt / shape variants)
-const KEEP_CLASS_RE = /^(wa-\d+|shape-[a-z]+)$/;
+const KEEP_CLASS_RE = /^(wa-\d+|shape-[a-z]+|ooxml-[a-z-]+|omml-[a-z-]+)$/;
 const DROP_TAGS = new Set(["script", "style", "meta", "link", "head", "title", "iframe", "object", "embed", "applet", "noscript", "svg", "math", "template", "form", "input", "button", "select", "textarea", "audio", "video"]);
 
 function sanitizeStyle(el, out) {
@@ -2054,9 +2056,11 @@ export function buildToolbar(editor, hooks = {}) {
   bar.append(...Object.values(fmtBtns), sep());
 
   // colors
-  let activeFg = "#c0392b";
+  // Ordinary typing starts with the editor's default text colour. Red is
+  // reserved for deletion revisions and must not become the toolbar default.
+  let activeFg = "#000000";
   const colorInput = el("input", { type: "color", value: activeFg, title: t("tb.textColor") });
-  const colorBtn = btn('<span style="border-bottom:3px solid #c0392b">A</span>', t("tb.textColor"), () => colorInput.click());
+  const colorBtn = btn('<span style="border-bottom:3px solid #000000">A</span>', t("tb.textColor"), () => colorInput.click());
   function applyFg(color) {
     restoreSelection(editor);
     exec("foreColor", color);
@@ -2080,7 +2084,14 @@ export function buildToolbar(editor, hooks = {}) {
     const node = s.anchorNode;
     const el = node.nodeType === 3 ? node.parentElement : node;
     if (!el) return;
-    colorBtn.firstChild.style.borderBottomColor = getComputedStyle(el).color;
+    const color = getComputedStyle(el).color;
+    activeFg = color;
+    colorBtn.firstChild.style.borderBottomColor = color;
+    const rgb = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (rgb) {
+      colorInput.value = "#" + rgb.slice(1, 4)
+        .map((part) => Number(part).toString(16).padStart(2, "0")).join("");
+    }
   }
   editor.addEventListener("mouseup", sampleColor);
   editor.addEventListener("keyup", sampleColor);

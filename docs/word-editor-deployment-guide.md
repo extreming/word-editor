@@ -36,8 +36,6 @@ word-editor 的 `3001` 端口只绑定服务器回环地址，不直接对内网
 ```text
 /home/aiadmin/word-editor/
 ├── services/       # word-editor 源码、Dockerfile、docker-compose.yml
-│   ├── .env        # 部署密钥和环境地址，仅服务器本地保存
-│   └── certs/      # 可选：访问 LegalAI 内网 HTTPS 所需的 CA 证书链
 └── data/           # 编辑器草稿、版本和生成 DOCX 等工作数据
 ```
 
@@ -46,7 +44,6 @@ word-editor 的 `3001` 端口只绑定服务器回环地址，不直接对内网
 ```bash
 mkdir -p /home/aiadmin/word-editor/services
 mkdir -p /home/aiadmin/word-editor/data
-mkdir -p /home/aiadmin/word-editor/services/certs
 ```
 
 进入服务目录：
@@ -97,58 +94,54 @@ docker-compose.yml
 
 则 Compose 的构建上下文需要相应调整，或者将源码移动到预期的 `services` 目录。
 
-## 4. Docker Compose 和密钥配置
+## 4. Docker Compose 配置
 
-### 4.1 生成 `TOKEN_SECRET`
+### 4.1 固定 `TOKEN_SECRET` 和 LegalAI 地址
 
-`TOKEN_SECRET` 用于签名和验证 word-editor 内部的短期文档令牌。它不是 LegalAI 登录 Token，不能写入源码、`docker-compose.yml`、Git 或部署日志。每个环境应使用不同的随机值，建议至少 32 字节。
+`TOKEN_SECRET` 用于签名和验证 word-editor 内部的短期文档令牌，它不是 LegalAI 登录 Token。当前 Dev 部署根据项目要求将它和 `LEGALAI_BASE_URL` 直接写在 `docker-compose.yml` 中，不再依赖 `.env`。
 
-在服务器上生成 32 字节随机密钥并写入 `.env`：
-
-```bash
-cd /home/aiadmin/word-editor/services
-umask 077
-
-TOKEN_SECRET="$(openssl rand -hex 32)"
-printf 'TOKEN_SECRET=%s\n' "$TOKEN_SECRET" > .env
-printf 'LEGALAI_BASE_URL=%s\n' 'https://legalai.example.com/legalai' >> .env
-unset TOKEN_SECRET
-chmod 600 .env
-```
-
-将 `LEGALAI_BASE_URL` 替换为当前环境中 word-editor 容器可以访问的 LegalAI 后端地址。验证密钥长度而不输出密钥内容：
+每个环境仍应使用不同的 32 字节随机密钥。需要轮换时可以生成新值，再替换 Compose 中的 `TOKEN_SECRET`：
 
 ```bash
-awk -F= '$1 == "TOKEN_SECRET" { print length($2) }' .env
+openssl rand -hex 32
 ```
 
-使用 `openssl rand -hex 32` 时预期输出 `64`。如果服务器没有 OpenSSL，也可以在可信电脑上使用 Node.js 生成，然后通过安全方式写入服务器 `.env`：
+如果服务器没有 OpenSSL，也可以使用 Node.js：
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
+Compose 中的配置形式：
+
+```yaml
+TOKEN_SECRET: '替换为64位随机十六进制字符串'
+LEGALAI_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
+```
+
 注意：
 
 - 不要在工单、聊天或截图中发送 `TOKEN_SECRET`；
-- `.env` 权限应保持为 `600`；
+- 密钥会进入 Compose 文件和代码历史，仓库访问权限必须受控；
 - 轮换 `TOKEN_SECRET` 会立即使已经签发的文档临时令牌失效，轮换后需要重新打开编辑器会话；
+- 复制到测试或生产环境时，必须同时替换密钥和 `LEGALAI_BASE_URL`；
 
 ### 4.2 内网 CA 证书
 
-如果 LegalAI 后端使用系统默认 CA 不信任的内网证书，将完整 CA 证书链保存为：
+LegalAI 后端使用公司内网证书。Rocky Linux 宿主机已经维护了系统 CA Bundle，Compose 直接将以下宿主机文件只读挂载到容器：
 
 ```text
-/home/aiadmin/word-editor/services/certs/host-ca-bundle.crt
+/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 ```
 
-设置只读权限：
+部署前确认它是普通文件并包含证书：
 
 ```bash
-chmod 644 /home/aiadmin/word-editor/services/certs/host-ca-bundle.crt
+sudo stat -c 'type=%F size=%s' /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+sudo grep -m1 'BEGIN CERTIFICATE' /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 ```
 
-如果 LegalAI HTTPS 证书已被容器系统 CA 信任，可以从 Compose 中同时删除该证书挂载和 `NODE_EXTRA_CA_CERTS`。
+这是宿主机的受信任 CA 证书库，不是 Nginx 为 `legaloffice.lenovo.com` 配置的服务端证书或私钥。不要将 Nginx 私钥挂载给 word-editor。如果 LegalAI HTTPS 证书以后已被容器默认 CA 信任，可以从 Compose 中同时删除该挂载和 `NODE_EXTRA_CA_CERTS`。
 
 ### 4.3 Compose 配置
 
@@ -166,14 +159,14 @@ services:
       - '127.0.0.1:3001:3001'
     volumes:
       - /home/aiadmin/word-editor/data:/app/data:Z
-      - ./certs/host-ca-bundle.crt:/app/certs/host-ca-bundle.crt:ro,Z
+      - /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/etc/ssl/certs/host-ca-bundle.crt:ro
     environment:
       HOST: '0.0.0.0'
       PORT: '3001'
       DATA_DIR: '/app/data'
-      NODE_EXTRA_CA_CERTS: '/app/certs/host-ca-bundle.crt'
-      TOKEN_SECRET: '${TOKEN_SECRET:?TOKEN_SECRET is required}'
-      LEGALAI_BASE_URL: '${LEGALAI_BASE_URL:?LEGALAI_BASE_URL is required}'
+      NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/host-ca-bundle.crt'
+      TOKEN_SECRET: '替换为64位随机十六进制字符串'
+      LEGALAI_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
       LEGALAI_CONTENT_PATH: '/zOffice/{docId}/content'
       LEGALAI_TOKEN_HEADER: 'token'
       LEGALAI_REQUEST_TIMEOUT_MS: '30000'
@@ -186,7 +179,8 @@ services:
 
 - `127.0.0.1:3001:3001`：仅允许服务器本机访问应用端口，由 Nginx 对外代理；
 - `/home/aiadmin/word-editor/data:/app/data`：保存编辑器草稿、版本和生成的 DOCX；这些是编辑器工作数据，不是 LegalAI 正式业务文档的最终存储；
-- `TOKEN_SECRET`、`LEGALAI_BASE_URL`：由同目录 `.env` 提供，Compose 缺少任一值时拒绝启动；
+- `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`：直接复用宿主机系统 CA 信任库，只读挂载，不属于 word-editor 发布文件；
+- `TOKEN_SECRET`、`LEGALAI_BASE_URL`：当前 Dev 部署直接固定在 Compose 中，不再依赖同目录 `.env`；复制到其他环境时必须替换为该环境的独立密钥和后端地址；
 - `LEGALAI_AUTO_COMMIT_ENABLED=false`：自动保存仍写本地草稿，只有保存按钮、`Ctrl+S`、SDK `save()/close()` 等正式保存动作才回写 LegalAI；
 - `VERSION_HISTORY_ENABLED=true`：保留内部历史版本；如果某环境明确不需要历史功能，可以改为 `false`；
 - `:Z`：为 SELinux 环境添加挂载标签兼容性；本机检查时 SELinux 为 `Disabled`，保留该参数不影响使用；

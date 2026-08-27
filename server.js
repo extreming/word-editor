@@ -52,8 +52,14 @@ async function regenerateDocx(meta) {
   if (meta.state == null) return false;
   try {
     const docx = await docxNode();
+    let baseBytes = await storage.readFile(sourceDocxKey(meta.id));
+    if (!baseBytes) {
+      baseBytes = await storage.readFile(docxKey(meta.id));
+      if (baseBytes) await storage.writeFile(sourceDocxKey(meta.id), baseBytes);
+    }
     const blob = await docx.buildDocxFromHtml(meta.state, {
       title: meta.title, pageSetup: meta.pageSetup, comments: meta.comments,
+      baseDocx: baseBytes ? toArrayBuffer(baseBytes) : null,
     });
     const bytes = Buffer.from(await blob.arrayBuffer());
     await storage.writeFile(docxKey(meta.id), bytes);
@@ -127,6 +133,7 @@ function validId(id) { return ID_RE.test(id); }
 
 function docKey(id) { return `${id}.json`; }
 function docxKey(id) { return `${id}.docx`; }
+function sourceDocxKey(id) { return `${id}.source.docx`; }
 function versionsKey(id) { return `${id}.versions.json`; }
 
 async function readMeta(id) {
@@ -472,6 +479,7 @@ async function api(req, res, url) {
     try { parsed = await docx.importDocx(toArrayBuffer(bytes)); }
     catch (e) { return sendJSON(res, 422, { error: `could not parse LegalAI DOCX: ${e.message}` }); }
 
+    await storage.writeFile(sourceDocxKey(id), bytes);
     await storage.writeFile(docxKey(id), bytes);
     const document = await writeMeta(id, {
       title: parsed.title || String(body.title || id).slice(0, 300),
@@ -570,6 +578,7 @@ async function api(req, res, url) {
       });
     }
 
+    await storage.writeFile(sourceDocxKey(id), bytes);
     await storage.writeFile(docxKey(id), bytes);
     const doc = await writeMeta(id, {
       title: parsed.title || fallbackTitle,
@@ -600,7 +609,7 @@ async function api(req, res, url) {
       return sendJSON(res, 200, await writeMeta(id, body));
     }
     if (method === "DELETE") {
-      for (const k of [docKey(id), docxKey(id), versionsKey(id)]) {
+      for (const k of [docKey(id), docxKey(id), sourceDocxKey(id), versionsKey(id)]) {
         await storage.deleteFile(k);
       }
       closeRoom(id);
@@ -615,7 +624,9 @@ async function api(req, res, url) {
     if (method === "PUT") {
       const body = await readJSON(req);
       if (!body.data) return sendJSON(res, 400, { error: "no data" });
-      await storage.writeFile(docxKey(id), Buffer.from(body.data, "base64"));
+      const bytes = Buffer.from(body.data, "base64");
+      if (!(await storage.exists(sourceDocxKey(id)))) await storage.writeFile(sourceDocxKey(id), bytes);
+      await storage.writeFile(docxKey(id), bytes);
       return sendJSON(res, 200, { ok: true });
     }
     if (method === "GET") {

@@ -198,7 +198,8 @@ public/embed-example.html   SDK demo
 ```
 
 Storage files under `DATA_DIR`: `<id>.json` (state + pageSetup + rev + tenantId/contractId),
-`<id>.docx` (regenerated from the HTML state on every save that changes it),
+`<id>.source.docx` (immutable imported OOXML source), `<id>.docx` (current merged
+artifact regenerated from HTML while retaining preserved OOXML objects),
 `<id>.versions.json` (history).
 
 ## Requirements coverage — honest status
@@ -214,7 +215,7 @@ Storage files under `DATA_DIR`: `<id>.json` (state + pageSetup + rev + tenantId/
 | Page setup, page breaks | ✅ · columns, headers/footers, footnotes, TOC, watermarks ❌ |
 | Tables (merge/split/shading) | ✅ · table formulas ❌ |
 | Images | ✅ inline · crop/wrap/anchored positioning ❌ |
-| Shapes, WordArt, SmartArt, charts, equations | ❌ |
+| Embedded objects, native shapes/WordArt, SmartArt, charts, equations | ⚠️ read-only preview/placeholder; original OOXML retained · native editing ❌ |
 | Hyperlinks, symbols | ✅ · bookmarks/cross-references ❌ |
 | Presence + live sync | ✅ (rev-based last-writer-wins + conflict UI) |
 | Character-level co-editing (OT/CRDT) | ❌ — see below |
