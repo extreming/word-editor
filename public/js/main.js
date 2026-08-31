@@ -6,6 +6,7 @@ import {
   attachImageEditing,
   initTooltips,
   createFindPanel,
+  createSelectionHighlight,
   createTrackChanges,
   wrapSelectionComment,
   sanitizeHtml,
@@ -112,6 +113,7 @@ function fmtTime(t) {
 async function main() {
   applyI18n();
   const editor = $("editor");
+  const selectionHighlight = createSelectionHighlight(editor);
   const editHistory = new History(editor);
   editHistory.attach();
   const toolbarHost = $("toolbar");
@@ -970,6 +972,7 @@ async function main() {
   }
 
   function setEditorContent(html) {
+    selectionHighlight.clearHighlight();
     editor.innerHTML = html && html.trim() ? sanitizeHtml(html) : "<p><br></p>";
     if (editHistory) editHistory.reset();
     updateWordCount();
@@ -2252,6 +2255,14 @@ async function main() {
               m.args || {},
             ),
           });
+          break;
+        case "highlightSelection":
+          selectionHighlight.highlightSelection();
+          reply({ ok: true });
+          break;
+        case "clearHighlight":
+          selectionHighlight.clearHighlight();
+          reply({ ok: true });
           break;
         case "replaceAll":
           reply({

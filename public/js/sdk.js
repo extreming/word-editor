@@ -27,6 +27,9 @@
  *     await ed.setTitle("Report");
  *     await ed.save();
  *     await ed.find("term", {matchCase:false, regex:false});
+ *     // find only selects/reveals; temporary orange/white styling is explicit:
+ *     await ed.highlightSelection(); // -> {ok:true}; current selection only
+ *     await ed.clearHighlight();     // -> {ok:true}; preserve original formatting
  *     await ed.replaceAll("a", "b", {});
  *     await ed.setMode("view");
  *     await ed.loadDocument(id);
@@ -153,6 +156,8 @@
       loadDocument: (id) => call("loadDocument", { id }),
       setMode: (mode) => call("setMode", { mode }),
       find: (query, o) => call("find", { query, ...o }),
+      highlightSelection: () => call("highlightSelection"),
+      clearHighlight: () => call("clearHighlight"),
       replaceAll: (query, replacement, o) => call("replaceAll", { query, replacement, ...o }),
       focus: () => call("focus"),
       undo: () => call("undo"),

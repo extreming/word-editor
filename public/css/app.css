@@ -480,6 +480,12 @@ body.pdf-dragging .pdf-ann * { pointer-events: none; }
 .find-count { font-size: 12px; color: var(--muted); min-width: 60px; }
 mark.find-hit { background: #ffe28a; padding: 0; }
 mark.find-hit.current { background: #ff9632; color: #fff; }
+/* Temporary SDK paint; document HTML and original inline styles stay intact. */
+@media screen {
+  #editor::highlight(sdk-selection) { background-color: #ff9632; color: #fff; }
+  #editor.sdk-highlight-selection::selection,
+  #editor.sdk-highlight-selection *::selection { background-color: #ff9632; color: #fff; }
+}
 
 /* ---------- banner ---------- */
 .banner {

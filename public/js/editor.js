@@ -106,7 +106,13 @@ function escText(s) {
 export function scrollElementIntoEditorView(editor, target) {
   if (!target) return;
   const container = editor.closest("#editor-wrap");
-  if (!container) { target.scrollIntoView({ block: "center" }); return; }
+  if (!container) {
+    const element = target.startContainer
+      ? (target.startContainer.nodeType === 1 ? target.startContainer : target.startContainer.parentElement)
+      : target;
+    element?.scrollIntoView({ block: "center" });
+    return;
+  }
   const elRect = target.getBoundingClientRect();
   const contRect = container.getBoundingClientRect();
   const delta = elRect.top - contRect.top - contRect.height / 2 + elRect.height / 2;
@@ -152,6 +158,49 @@ export function restoreSelection(editor) {
   sel.removeAllRanges();
   sel.addRange(savedRange);
   return true;
+}
+
+// Paint a temporary selection without changing document markup or formatting.
+// Native selection paints above custom highlights, so style it only while it
+// coincides with the explicitly highlighted range.
+export function createSelectionHighlight(editor) {
+  const name = "sdk-selection";
+  const win = editor.ownerDocument.defaultView;
+  let highlightedRange = null;
+  function syncSelectionStyle() {
+    const sel = win.getSelection();
+    const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+    editor.classList.toggle("sdk-highlight-selection", !!(
+      highlightedRange && range && !range.collapsed &&
+      range.compareBoundaryPoints(0, highlightedRange) === 0 &&
+      range.compareBoundaryPoints(2, highlightedRange) === 0
+    ));
+  }
+  editor.ownerDocument.addEventListener("selectionchange", syncSelectionStyle);
+  return {
+    highlightSelection() {
+      if (!win.CSS?.highlights || !win.Highlight)
+        throw new Error("This browser does not support the CSS Custom Highlight API");
+      let sel = win.getSelection();
+      if (!sel?.rangeCount || !editor.contains(sel.anchorNode)) {
+        restoreSelection(editor);
+        sel = win.getSelection();
+      }
+      const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+      if (!range || range.collapsed || !range.toString() ||
+          !editor.contains(range.startContainer) || !editor.contains(range.endContainer))
+        throw new Error("no selection to highlight");
+      highlightedRange = range.cloneRange();
+      win.CSS.highlights.set(name, new win.Highlight(highlightedRange));
+      saveSelection(editor);
+      syncSelectionStyle();
+    },
+    clearHighlight() {
+      win.CSS?.highlights?.delete(name);
+      highlightedRange = null;
+      syncSelectionStyle();
+    },
+  };
 }
 export function insertHtmlAtCaret(editor, html) {
   editor.focus();
@@ -603,6 +652,7 @@ export function createFindPanel(editor, host) {
   const count = el("span", { class: "find-count" }, [""]);
   let hits = [];
   let cur = -1;
+  let highlightMatches = true;
 
   function clearHighlights() {
     for (const m of editor.querySelectorAll("mark.find-hit")) {
@@ -641,7 +691,7 @@ export function createFindPanel(editor, host) {
 
   function scrollWithinEditor(target) { scrollElementIntoEditorView(editor, target); }
   // Updates the visual "current hit" state and count, and — critically —
-  // gives the current hit a REAL Selection/Range (not just a <mark>), saved
+  // gives the current hit a REAL Selection/Range, saved
   // via saveSelection() so a later insertHtmlAtCaret/insertTextAtCaret/
   // insertTracked* call (e.g. an SDK caller doing find() then replacing at
   // that spot) lands exactly at the match instead of wherever the caret
@@ -649,19 +699,21 @@ export function createFindPanel(editor, host) {
   // keystroke-by-keystroke doesn't yank the viewport around — only an
   // explicit next/prev/find() call reveals the match.
   function updateCurrentHit(scroll) {
-    hits.forEach((h, i) => h.classList.toggle("current", i === cur));
+    hits.forEach((h, i) => h.classList?.toggle("current", i === cur));
     count.textContent = hits.length ? `${cur + 1}/${hits.length}` : "0 results";
     if (cur < 0 || !hits[cur]) return;
     const sel = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(hits[cur]);
+    const hit = hits[cur];
+    const range = hit.cloneRange ? hit.cloneRange() : document.createRange();
+    if (!hit.cloneRange) range.selectNodeContents(hit);
     sel.removeAllRanges();
     sel.addRange(range);
     saveSelection(editor);
     if (scroll) scrollWithinEditor(hits[cur]);
   }
 
-  function search({ reveal = false } = {}) {
+  function search({ reveal = false, highlight = highlightMatches } = {}) {
+    highlightMatches = highlight;
     clearHighlights();
     const re = buildRegex();
     if (!re) return;
@@ -689,19 +741,23 @@ export function createFindPanel(editor, host) {
         } catch {}
       }
     }
-    // wrap from last to first so offsets stay valid
-    for (let i = ranges.length - 1; i >= 0; i--) {
-      const mark = document.createElement("mark");
-      mark.className = "find-hit";
-      try {
-        ranges[i].surroundContents(mark);
-      } catch {
-        const frag = ranges[i].extractContents();
-        mark.appendChild(frag);
-        ranges[i].insertNode(mark);
+    // SDK find keeps native ranges and never wraps or styles the matches.
+    // The interactive find panel retains its existing visual highlights.
+    if (highlight) {
+      // Wrap from last to first so text offsets remain valid.
+      for (let i = ranges.length - 1; i >= 0; i--) {
+        const mark = document.createElement("mark");
+        mark.className = "find-hit";
+        try {
+          ranges[i].surroundContents(mark);
+        } catch {
+          const frag = ranges[i].extractContents();
+          mark.appendChild(frag);
+          ranges[i].insertNode(mark);
+        }
       }
     }
-    hits = [...editor.querySelectorAll("mark.find-hit")];
+    hits = highlight ? [...editor.querySelectorAll("mark.find-hit")] : ranges;
     cur = hits.length ? 0 : -1;
     updateCurrentHit(reveal);
   }
@@ -714,20 +770,26 @@ export function createFindPanel(editor, host) {
   function replaceCurrent() {
     if (!hits.length) { search({ reveal: true }); if (!hits.length) return; }
     const m = hits[cur];
-    m.replaceWith(document.createTextNode(replIn.value));
+    const text = document.createTextNode(replIn.value);
+    if (m.cloneRange) { m.deleteContents(); m.insertNode(text); }
+    else m.replaceWith(text);
     fireInput(editor);
     search();
   }
   function replaceAll() {
     search();
     if (!hits.length) return;
-    for (const m of hits) m.replaceWith(document.createTextNode(replIn.value));
+    for (const m of [...hits].reverse()) {
+      const text = document.createTextNode(replIn.value);
+      if (m.cloneRange) { m.deleteContents(); m.insertNode(text); }
+      else m.replaceWith(text);
+    }
     fireInput(editor);
     clearHighlights();
     count.textContent = "replaced";
   }
 
-  findIn.addEventListener("input", () => search());
+  findIn.addEventListener("input", () => search({ highlight: true }));
   panel.append(
     findIn,
     btn("↑", t("find.previous"), () => move(-1)),
@@ -749,12 +811,12 @@ export function createFindPanel(editor, host) {
         const sel = window.getSelection().toString();
         if (sel && sel.length < 100) findIn.value = sel;
         findIn.focus(); findIn.select();
-        if (findIn.value) search({ reveal: true });
+        if (findIn.value) search({ reveal: true, highlight: true });
       } else clearHighlights();
     },
     close() { panel.classList.add("hidden"); clearHighlights(); },
     isOpen() { return !panel.classList.contains("hidden"); },
-    find(q, opts = {}) { findIn.value = q; caseCk.checked = !!opts.matchCase; regexCk.checked = !!opts.regex; panel.classList.remove("hidden"); search({ reveal: true }); return hits.length; },
+    find(q, opts = {}) { findIn.value = q; caseCk.checked = !!opts.matchCase; regexCk.checked = !!opts.regex; panel.classList.remove("hidden"); search({ reveal: true, highlight: false }); return hits.length; },
     replaceAll(q, r, opts = {}) { findIn.value = q; replIn.value = r; caseCk.checked = !!opts.matchCase; regexCk.checked = !!opts.regex; search(); const n = hits.length; if (n) replaceAll(); return n; },
     clear: clearHighlights,
   };
