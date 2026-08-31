@@ -105,15 +105,22 @@ docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word
     mode: "edit",            // "edit" | "view"
     toolbar: true, statusbar: true,
     user: "Alice",           // presence name
-    onReady(i) {}, onDocument(i) {}, onChange(i) {}, onSave(i) {}, onPresence(p) {}, onError(e) {},
+    onReady(i) {}, onDocument(i) {}, onChange(i) {}, onSave(i) {},
+    onCommentDelete(i) { console.log("deleted comment", i.id); },
+    onPresence(p) {}, onError(e) {},
   });
   await ed.getContent(); await ed.setContent(html);
   await ed.insertText(t); await ed.insertHtml(h); await ed.getText();
   await ed.getMeta(); await ed.setTitle(t); await ed.save();
-  await ed.find(q, {matchCase, regex}); await ed.replaceAll(q, r, {});
+  const { matches } = await ed.find(q, {matchCase, regex}); // select/reveal only
+  if (matches > 0) await ed.highlightSelection(); // temporary orange background, white text
+  await ed.clearHighlight();                      // restore the original formatting
+  await ed.replaceAll(q, r, {});
   await ed.setMode("view"); await ed.loadDocument(id); ed.destroy();
 </script>
 ```
+
+`highlightSelection()` operates on the current editor selection (including one created by `find()`), returns `{ok:true}`, and replaces the previous SDK highlight. `clearHighlight()` is idempotent and removes only that temporary SDK highlight. Neither method modifies document HTML, saved/exported content, or undo history. `highlightSelection()` rejects when there is no non-empty text selection or the browser lacks the CSS Custom Highlight API.
 
 - Live demo: open `/embed-example.html`
 - Full-screen persistent demo: open `/fullscreen-test.html` (the last opened document is restored after refresh; `?doc=<id>` selects the initial document)

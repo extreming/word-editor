@@ -138,14 +138,30 @@ await ed.clearHighlight(); // 保留选区和文本原有的颜色、底色、�
 
 初始化时可传入以下回调，当前没有单独的 `on()` / `off()` 方法：
 
-| 回调               | 触发时机         |
-| ------------------ | ---------------- |
-| `onReady(info)`    | 编辑器初始化就绪 |
-| `onDocument(info)` | 文档打开或切换   |
-| `onChange(info)`   | 文档内容变化     |
-| `onSave(info)`     | 保存事件         |
-| `onPresence(info)` | 协作在线状态变化 |
-| `onError(error)`   | 错误事件         |
+| 回调                         | 参数         | 触发时机                       |
+| ---------------------------- | ------------ | ------------------------------ |
+| `onReady(info)`              | 就绪信息     | 编辑器初始化就绪               |
+| `onDocument(info)`           | 文档信息     | 文档打开或切换                 |
+| `onChange(info)`             | 变更信息     | 文档内容变化                   |
+| `onSave(info)`               | 保存结果     | 保存完成                       |
+| `onCommentDelete({ id })`    | `{id}`       | 用户确认并完成批注删除后       |
+| `onPresence(info)`           | 在线用户信息 | 协作在线状态变化               |
+| `onError(error)`             | 错误信息     | 编辑器发生错误                 |
+
+监听批注删除事件：
+
+```js
+const ed = DocEditor.init({
+  container: "#editor-holder",
+  baseUrl: "http://localhost:3001",
+  docId: "文档ID",
+  onCommentDelete({ id }) {
+    console.log("被删除的批注 ID：", id);
+  },
+});
+```
+
+`onCommentDelete` 只在用户确认删除、编辑器完成本地批注及锚点移除后触发；取消删除不会触发。事件触发时已经安排自动保存，但不表示保存请求已经完成，持久化完成仍以 `onSave` 等保存结果为准。
 
 额外属性：`ed.iframe` 获取 iframe 元素；`DocEditor.version` 当前为 `"3.0.0"`。
 

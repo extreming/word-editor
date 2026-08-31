@@ -96,6 +96,9 @@ await ed.setPageSetup({ size:"A4", margins: { top:1, left:1 } });
 const docs   = await ed.listDocuments();
 await ed.newDocument("Memo");
 await ed.addComment("Review this paragraph");
+const { matches } = await ed.find("term", { matchCase:false, regex:false });
+if (matches > 0) await ed.highlightSelection(); // temporary orange background / white text
+await ed.clearHighlight();                     // restore the selection's original styles
 ed.destroy();
     </div>
   </div>
@@ -228,7 +231,10 @@ ed.destroy();
           <thead><tr><th><span data-i18n="apiDocs.th.sdkMethod">SDK method</span></th><th><span data-i18n="apiDocs.th.args">Args</span></th><th><span data-i18n="apiDocs.th.returns">Returns</span></th></tr></thead>
           <tbody>
             <tr><td>find</td><td><code>query, {matchCase?, regex?}</code></td><td><code>{matches}</code></td></tr>
+            <tr><td>highlightSelection</td><td>—</td><td><code>{ok:true}</code></td></tr>
+            <tr><td>clearHighlight</td><td>—</td><td><code>{ok:true}</code></td></tr>
             <tr><td>replaceAll</td><td><code>query, replacement, {matchCase?, regex?}</code></td><td><code>{replaced}</code></td></tr>
+            <tr><td colspan="3"><code>find()</code> selects and reveals the first match without highlighting it. <code>highlightSelection()</code> temporarily paints the current selection orange with white text; repeated calls replace the previous SDK highlight. <code>clearHighlight()</code> removes only the SDK highlight and preserves the document's original formatting. Highlighting does not change saved/exported HTML or undo history.</td></tr>
           </tbody>
         </table>
       </div>
@@ -294,6 +300,7 @@ ed.destroy();
             <tr><td>onDocument</td><td>function</td><td>—</td><td>Fires when the current document is opened or switched</td></tr>
             <tr><td>onChange</td><td>function</td><td>—</td><td>Fires on every content change (throttled)</td></tr>
             <tr><td>onSave</td><td>function</td><td>—</td><td>Fires when a save round-trip completes</td></tr>
+            <tr><td>onCommentDelete</td><td>function</td><td><code>{id}</code></td><td>Fires after a comment is deleted in the editor</td></tr>
             <tr><td>onPresence</td><td>function</td><td>—</td><td>Fires on presence updates (users joining/leaving)</td></tr>
             <tr><td>onError</td><td>function</td><td>—</td><td>Fires on errors</td></tr>
           </tbody>

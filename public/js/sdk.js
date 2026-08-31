@@ -16,6 +16,7 @@
  *       onDocument(info){},                    // current document was opened/switched
  *       onChange(info)  {},
  *       onSave(info)    {},
+ *       onCommentDelete(info) {},              // {id}: a comment was deleted
  *       onPresence(p)   {},
  *       onError(err)    {},
  *     });
@@ -119,6 +120,7 @@
         const handler = {
           ready: opts.onReady, document: opts.onDocument,
           change: opts.onChange, save: opts.onSave,
+          commentDelete: opts.onCommentDelete,
           presence: opts.onPresence, error: opts.onError,
         }[m.event];
         if (handler) try { handler(m.data); } catch (e) { console.error(e); }

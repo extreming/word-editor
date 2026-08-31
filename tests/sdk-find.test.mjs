@@ -156,3 +156,26 @@ test("SDK sends the independent highlight commands and preserves the find payloa
   sdk.destroy();
   dom.window.close();
 });
+
+test("SDK forwards a deleted comment id to the host callback", async () => {
+  const { dom, window } = setup("<p>text</p>");
+  window.eval(await readFile(new URL("../public/js/sdk.js", import.meta.url), "utf8"));
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  let deletedComment = null;
+  const sdk = window.DocEditor.init({
+    container,
+    onCommentDelete(info) {
+      deletedComment = info;
+    },
+  });
+
+  window.dispatchEvent(new window.MessageEvent("message", {
+    source: sdk.iframe.contentWindow,
+    data: { we: 1, event: "commentDelete", data: { id: "comment-42" } },
+  }));
+
+  assert.deepEqual(deletedComment, { id: "comment-42" });
+  sdk.destroy();
+  dom.window.close();
+});

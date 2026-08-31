@@ -1280,6 +1280,7 @@ async function main() {
         docComments = docComments.filter((x) => x.id !== c.id);
         renderComments();
         scheduleSave();
+        emitToHost("commentDelete", { id: c.id });
       });
       actions.append(replyBtn, resolveBtn, delBtn);
       card.appendChild(actions);
