@@ -125,6 +125,7 @@ docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word
 - Live demo: open `/embed-example.html`
 - Full-screen persistent demo: open `/fullscreen-test.html` (the last opened document is restored after refresh; `?doc=<id>` selects the initial document)
 - Direct iframe embedding via URL flags: `/?embed=1&doc=<id>&mode=view&toolbar=0&statusbar=0&user=Bob`
+- Deployment version: open `/version` to display the `version` from `package.json`
 
 **Server**
 - REST: `GET/POST /api/documents`, `GET/PUT/DELETE /api/documents/:id`,

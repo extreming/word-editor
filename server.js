@@ -17,6 +17,7 @@ const crypto = require("crypto");
 const { mintToken, verifyToken } = require("./server/scopedAuth");
 const { createStorage } = require("./server/storage");
 const { convertToDocx: convertDocToDocx } = require("./server/docConvert");
+const { version: APP_VERSION } = require("./package.json");
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "127.0.0.1";
@@ -105,6 +106,30 @@ function send(res, code, body, headers = {}) {
 }
 function sendJSON(res, code, obj) {
   send(res, code, JSON.stringify(obj), { "Content-Type": "application/json; charset=utf-8" });
+}
+function sendVersionPage(res) {
+  const version = escHtml(APP_VERSION);
+  send(res, 200, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Word Editor ${version}</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+    main { padding: 2rem 3rem; text-align: center; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 1rem; }
+    h1 { margin: 0 0 .75rem; font-size: 1.25rem; font-weight: 600; }
+    output { font: 700 2rem/1.2 ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Word Editor</h1>
+    <output aria-label="Version">${version}</output>
+  </main>
+</body>
+</html>`, { "Content-Type": "text/html; charset=utf-8" });
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -913,7 +938,8 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   try {
-    if (url.pathname.startsWith("/api/")) await api(req, res, url);
+    if (url.pathname === "/version" && req.method === "GET") sendVersionPage(res);
+    else if (url.pathname.startsWith("/api/")) await api(req, res, url);
     else serveStatic(req, res, url);
   } catch (e) {
     console.error(e);
