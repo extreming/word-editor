@@ -291,9 +291,9 @@ const ALLOWED = {
 const ALLOWED_STYLES = new Set([
   "color", "background-color", "font-size", "font-family", "font-weight", "font-style",
   "text-decoration", "text-decoration-line", "text-align", "text-indent",
-  "line-height", "vertical-align", "width", "height",
+  "line-height", "vertical-align", "width", "height", "max-width",
   // image editing + shapes
-  "border", "border-width", "border-style", "border-color", "border-radius",
+  "border", "border-width", "border-style", "border-color", "border-top", "border-radius",
   "float", "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
   "display", "clip-path", "background", "box-shadow", "padding", "transform",
   // free-floating shape objects

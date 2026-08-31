@@ -509,11 +509,121 @@ function isPlainPictureDrawing(node) {
     && !findDesc(node, "relIds") && !findDesc(node, "chart");
 }
 
+function simpleLineDrawingPreview(node) {
+  const geometry = findDesc(node, "prstGeom");
+  if (!findDesc(node, "wsp") || findDesc(node, "chart") || findDesc(node, "relIds")
+      || findDesc(node, "blip") || !geometry || geometry.getAttribute("prst") !== "line"
+      || findDesc(node, "txbxContent")) return null;
+
+  const transform = findDesc(node, "xfrm");
+  const rotation = transform && parseInt(transform.getAttribute("rot") || "0", 10);
+  if (rotation) return null;
+
+  const extent = findDesc(node, "extent");
+  const cx = extent && parseInt(extent.getAttribute("cx"), 10);
+  const cy = extent && parseInt(extent.getAttribute("cy"), 10);
+  if (!(cx > 0) || Math.abs(cy || 0) > Math.max(EMU_PER_PX * 3, cx * 0.02)) return null;
+
+  const line = findDesc(node, "ln");
+  if (!line) return null;
+  const dash = findDesc(line, "prstDash");
+  if (dash && !["solid", "sysDot", "sysDash"].includes(dash.getAttribute("val"))) return null;
+  for (const endName of ["headEnd", "tailEnd"]) {
+    const end = findDesc(line, endName);
+    if (end && !["", "none"].includes(end.getAttribute("type") || "")) return null;
+  }
+
+  const colorNode = findDesc(line, "srgbClr");
+  const colorValue = colorNode && colorNode.getAttribute("val");
+  const color = /^[0-9a-f]{6}$/i.test(colorValue || "") ? `#${colorValue}` : "#000000";
+  const strokeEmu = parseInt(line.getAttribute("w") || String(EMU_PER_PX), 10);
+  const stroke = Math.max(1, Math.min(12, Math.round((strokeEmu / EMU_PER_PX) * 100) / 100));
+  const width = Math.max(1, Math.min(2000, Math.round(cx / EMU_PER_PX)));
+  const dashStyle = dash && dash.getAttribute("val") !== "solid" ? "dashed" : "solid";
+
+  const offsetPx = (positionName) => {
+    const position = findDesc(node, positionName);
+    const offset = position && findDesc(position, "posOffset");
+    const emu = offset && parseInt(offset.textContent || "0", 10);
+    return Number.isFinite(emu) ? Math.max(-2000, Math.min(2000, Math.round((emu / EMU_PER_PX) * 100) / 100)) : 0;
+  };
+  const x = offsetPx("positionH");
+  const y = offsetPx("positionV");
+  return `<span class="ooxml-line-preview" aria-hidden="true" ` +
+    `style="width:${width}px;max-width:100%;border-top:${stroke}px ${dashStyle} ${color};` +
+    `transform:translate(${x}px,${y}px)"></span>`;
+}
+
+function vmlLengthPx(value) {
+  const match = String(value || "").trim().match(/^(-?\d+(?:\.\d+)?)(pt|px|in)?$/i);
+  if (!match) return null;
+  const amount = parseFloat(match[1]);
+  const unit = (match[2] || "px").toLowerCase();
+  const px = unit === "pt" ? amount * 96 / 72 : unit === "in" ? amount * 96 : amount;
+  return Number.isFinite(px)
+    ? Math.max(-2000, Math.min(2000, Math.round(px * 100) / 100)) : null;
+}
+
+function vmlStyleMap(shape) {
+  const style = new Map();
+  for (const declaration of (shape && shape.getAttribute("style") || "").split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon <= 0) continue;
+    style.set(declaration.slice(0, colon).trim().toLowerCase(), declaration.slice(colon + 1).trim());
+  }
+  return style;
+}
+
+function vmlAnchorGeometry(node) {
+  const shape = findDesc(node, "shape");
+  const style = vmlStyleMap(shape);
+  if (!shape || style.get("position") !== "absolute") return null;
+  const left = vmlLengthPx(style.get("margin-left"));
+  const top = vmlLengthPx(style.get("margin-top"));
+  const width = vmlLengthPx(style.get("width"));
+  const height = vmlLengthPx(style.get("height"));
+  return left != null && top != null && width > 0 && height > 0
+    ? { shape, left, top, width, height } : null;
+}
+
+function simpleVmlTextBoxPreview(node, ctx) {
+  const anchor = vmlAnchorGeometry(node);
+  const shape = anchor && anchor.shape;
+  const textBox = shape && findDesc(shape, "textbox");
+  const content = textBox && findDesc(textBox, "txbxContent");
+  if (!shape || !content || findDesc(content, "drawing") || findDesc(content, "pict")
+      || findDesc(content, "object") || findDesc(content, "tbl") || findDesc(content, "AlternateContent")) {
+    return null;
+  }
+
+  const paragraphs = children(content, W, "p");
+  const text = [...content.getElementsByTagNameNS(W, "t")]
+    .map((textNode) => textNode.textContent || "").join("").trim();
+  if (!paragraphs.length || !text) return null;
+
+  const paragraphHtml = paragraphs.map((paragraph) => {
+    const info = paragraphStyleInfo(paragraph, ctx);
+    const inline = inlineToHtml(paragraph, ctx);
+    const styles = [...info.styles, "display:block", "margin:0"];
+    return `<span class="ooxml-textbox-paragraph" style="${styles.join(";")}">` +
+      `${inline.html || "<br>"}</span>`;
+  }).join("");
+  const stroked = shape.getAttribute("stroked") !== "f";
+  const strokeColor = shape.getAttribute("strokecolor");
+  const borderColor = /^#[0-9a-f]{6}$/i.test(strokeColor || "") ? strokeColor : "#000000";
+  const filled = shape.getAttribute("filled") !== "f";
+  const fillColor = shape.getAttribute("fillcolor");
+  const background = filled && /^#[0-9a-f]{6}$/i.test(fillColor || "") ? fillColor : (filled ? "#ffffff" : "transparent");
+  return `<span class="ooxml-textbox-preview" style="border:${stroked ? `1px solid ${borderColor}` : "0"};` +
+    `background:${background}">${paragraphHtml}</span>`;
+}
+
 const COMPLEX_LABELS = {
   formula: "Formula · read-only", embedded: "Embedded object · read-only",
   smartart: "SmartArt · read-only", chart: "Chart · read-only",
   wordart: "WordArt · read-only", shape: "Shape · read-only", drawing: "Drawing · read-only",
-  image: "Image · read-only",
+  image: "Image · read-only", line: "Horizontal line · read-only",
+  textbox: "Text box · read-only",
 };
 
 function mathChild(node, name) {
@@ -556,9 +666,15 @@ function ommlToHtml(node) {
 }
 
 function complexObjectHtml(node, ctx, rawXml, options = {}) {
-  const kind = options.kind || complexObjectKind(node) || "drawing";
+  const linePreview = simpleLineDrawingPreview(node);
+  const textBoxPreview = simpleVmlTextBoxPreview(node, ctx);
+  const vmlAnchor = vmlAnchorGeometry(node);
+  const kind = options.kind || (linePreview ? "line" : null) || (textBoxPreview ? "textbox" : null)
+    || complexObjectKind(node) || "drawing";
   const formulaPreview = kind === "formula" ? ommlToHtml(node) : "";
   const preview = relationshipImage(node, ctx)
+    || linePreview
+    || textBoxPreview
     || (formulaPreview ? `<span class="ooxml-formula-preview">${formulaPreview}</span>` : "");
   let detail = options.detail || "";
   if (kind === "formula") detail = String(node.textContent || "").replace(/\s+/g, " ").trim();
@@ -576,8 +692,12 @@ function complexObjectHtml(node, ctx, rawXml, options = {}) {
   }
   detail = detail ? `: ${detail.slice(0, 120)}` : "";
   const label = `${COMPLEX_LABELS[kind] || COMPLEX_LABELS.drawing}${detail}`;
-  const classes = `ooxml-object ooxml-${kind}${options.anchored ? " ooxml-anchored" : ""}${preview ? " has-preview" : ""}`;
-  return `<span class="${classes}" data-ooxml-kind="${kind}" data-ooxml="${utf8ToBase64(rawXml)}" contenteditable="false" title="${escXml(label)}">` +
+  const classes = `ooxml-object ooxml-${kind}${linePreview ? " ooxml-simple-line" : ""}` +
+    `${textBoxPreview ? " ooxml-simple-textbox" : ""}${vmlAnchor ? " ooxml-vml-anchored" : ""}` +
+    `${options.anchored ? " ooxml-anchored" : ""}${preview ? " has-preview" : ""}`;
+  const anchorStyle = vmlAnchor
+    ? ` style="left:${vmlAnchor.left}px;top:${vmlAnchor.top}px;width:${vmlAnchor.width}px;height:${vmlAnchor.height}px"` : "";
+  return `<span class="${classes}"${anchorStyle} data-ooxml-kind="${kind}" data-ooxml="${utf8ToBase64(rawXml)}" contenteditable="false" title="${escXml(label)}">` +
     `${preview || ""}<span class="ooxml-object-label">${escHtml(label)}</span></span>`;
 }
 
@@ -816,9 +936,10 @@ function paragraphStyleInfo(p, ctx) {
 function tableToHtml(tbl, ctx) {
   // Build a model first so vMerge continuation cells can extend rowspans.
   const rows = [];
-  const merges = new Map(); // gridCol -> model cell currently spanning down
+  let merges = new Map(); // gridCol -> model cell spanning from the previous row
   for (const tr of children(tbl, W, "tr")) {
     const row = [];
+    const nextMerges = new Map();
     let gridCol = 0;
     for (const tc of children(tr, W, "tc")) {
       const tcPr = child(tc, W, "tcPr");
@@ -841,11 +962,14 @@ function tableToHtml(tbl, ctx) {
           else if (wv > 0 && type === "pct") widthCss = Math.round(wv / 50) + "%";
         }
       }
-      // skip grid columns still covered by an active rowspan from above
-      while (merges.has(gridCol) && vMerge !== "continue") gridCol += merges.get(gridCol).colspan;
       if (vMerge === "continue") {
         const origin = merges.get(gridCol);
-        if (origin) { origin.rowspan++; gridCol += origin.colspan; continue; }
+        if (origin) {
+          origin.rowspan++;
+          nextMerges.set(gridCol, origin);
+          gridCol += origin.colspan;
+          continue;
+        }
         vMerge = null; // continuation without a restart above: treat as normal
       }
       let inner = "";
@@ -856,11 +980,14 @@ function tableToHtml(tbl, ctx) {
       }
       const cell = { colspan, rowspan: 1, shd, widthCss, inner: inner || "<p><br></p>" };
       row.push(cell);
-      if (vMerge === "restart") merges.set(gridCol, cell);
-      else merges.delete(gridCol);
+      if (vMerge === "restart") nextMerges.set(gridCol, cell);
       gridCol += colspan;
     }
     rows.push(row);
+    // OOXML writes a continuation tc for every vertically merged cell in each
+    // covered row. Only those continuations (and new restarts) remain active;
+    // otherwise a completed merge can leak into a later, unrelated row.
+    merges = nextMerges;
   }
   let html = '<table><tbody>';
   for (const row of rows) {
@@ -895,9 +1022,12 @@ function renderParagraph(p, ctx) {
   const info = paragraphStyleInfo(p, ctx);
   const inner = inlineToHtml(p, ctx);
   const attrStr = info.styles.length ? ` style="${info.styles.join(";")}"` : "";
+  const anchorClass = [...p.getElementsByTagName("*")].some((node) =>
+    node.localName === "shape" && vmlStyleMap(node).get("position") === "absolute")
+    ? ' class="ooxml-anchor-container"' : "";
   let html = "";
   if (info.pageBreakBefore || inner.pageBreak) html += `<p class="page-break"><br></p>`;
-  html += `<${info.tag}${attrStr}>${inner.html || "<br>"}</${info.tag}>`;
+  html += `<${info.tag}${anchorClass}${attrStr}>${inner.html || "<br>"}</${info.tag}>`;
   return html;
 }
 
