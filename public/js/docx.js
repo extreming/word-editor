@@ -16,6 +16,8 @@ const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const MATH = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+const MC = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const XMLNS = "http://www.w3.org/2000/xmlns/";
 
 export function supportsDocx() {
   return typeof DecompressionStream !== "undefined" && typeof CompressionStream !== "undefined";
@@ -427,8 +429,49 @@ function imageFromDrawing(node, ctx) {
   return `<img src="${bytesToDataUrl(data, mime)}"${style} alt="">`;
 }
 
+function namespaceUriUsedBy(node, prefix) {
+  const scoped = node.lookupNamespaceURI(prefix);
+  if (scoped) return scoped;
+  const elements = [node, ...node.getElementsByTagName("*")];
+  for (const element of elements) {
+    if (element.prefix === prefix && element.namespaceURI) return element.namespaceURI;
+    for (const attribute of element.attributes) {
+      if (attribute.prefix === prefix && attribute.namespaceURI) return attribute.namespaceURI;
+    }
+  }
+  return null;
+}
+
 function serializeXmlNode(node) {
-  return new XMLSerializer().serializeToString(node);
+  const clone = node.cloneNode(true);
+  const sourceChoices = [];
+  const clonedChoices = [];
+  if (node.nodeType === 1 && node.namespaceURI === MC && node.localName === "Choice") {
+    sourceChoices.push(node);
+    clonedChoices.push(clone);
+  }
+  sourceChoices.push(...node.getElementsByTagNameNS(MC, "Choice"));
+  clonedChoices.push(...clone.getElementsByTagNameNS(MC, "Choice"));
+
+  // `mc:Choice/@Requires` contains namespace prefixes as plain text.  XMLSerializer
+  // preserves declarations needed by element/attribute names, but it may drop a
+  // declaration inherited from document.xml's root when the copied fragment only
+  // mentions that prefix in Requires.  Word treats such a Choice as unreadable
+  // OOXML even though ordinary XML parsers accept it.  Materialize every required
+  // namespace on the Choice before storing the fragment in data-ooxml.
+  for (let i = 0; i < sourceChoices.length; i++) {
+    const source = sourceChoices[i];
+    const copy = clonedChoices[i];
+    for (const prefix of (source.getAttribute("Requires") || "").trim().split(/\s+/).filter(Boolean)) {
+      // Older editor state may already lack the declaration at Choice scope.
+      // Recover it from a prefixed descendant before re-exporting that state.
+      const uri = namespaceUriUsedBy(source, prefix);
+      if (uri && copy.lookupNamespaceURI(prefix) !== uri) {
+        copy.setAttributeNS(XMLNS, `xmlns:${prefix}`, uri);
+      }
+    }
+  }
+  return new XMLSerializer().serializeToString(clone);
 }
 
 function relationshipImage(node, ctx) {
@@ -1247,7 +1290,10 @@ function collectRuns(node, props, runs) {
       // declarations/DTDs and limit roots to the inline structures we emit.
       if (rawOoxml && !/<\?(?:xml)|<!DOCTYPE/i.test(rawOoxml)
           && /^\s*<(?:w:r\b|m:oMath(?:Para)?\b|mc:AlternateContent\b)/.test(rawOoxml)) {
-        runs.push({ ...props, rawOoxml });
+        let normalizedOoxml = rawOoxml;
+        try { normalizedOoxml = serializeXmlNode(parseXml(rawOoxml).documentElement); }
+        catch { /* Keep the importer's validated fragment if normalization is unnecessary. */ }
+        runs.push({ ...props, rawOoxml: normalizedOoxml });
       }
       continue;
     }
