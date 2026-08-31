@@ -14,7 +14,24 @@
 | `close()`                 | 执行关闭前正式保存，**不会移除 iframe**   |
 | `destroy()`               | 移除 iframe、清理监听，**不会自动保存**   |
 
-初始化参数包括：`container`、`baseUrl`、`docId`、`mode`、`toolbar`、`statusbar`、`user`、`documentTitle`、`fileType`、`tenantId`、`history`、`businessToken`，以及下文的事件回调。
+初始化参数包括：`container`、`baseUrl`、`docId`、`mode`、`toolbar`、`statusbar`、`locale`、`user`、`documentTitle`、`fileType`、`tenantId`、`history`、`businessToken`，以及下文的事件回调。
+
+### 1.1 初始化界面语言
+
+集成方可通过 `locale` 指定编辑器 iframe 的初始界面语言：
+
+```js
+const ed = DocEditor.init({
+  container: "#editor-holder",
+  baseUrl: "http://localhost:3001",
+  docId: "文档ID",
+  locale: "zh", // 中文；英文使用 "en"
+});
+```
+
+`locale` 当前只支持 `"zh"` 和 `"en"`，传入其他值时 `DocEditor.init()` 会直接抛出错误。指定的语言仅影响编辑器界面文字，不会修改文档正文内容。
+
+语言选择优先级为：集成方传入的 `locale` > 编辑器中用户上次手动选择的语言 > 浏览器语言。不传 `locale` 时保持原有的自动识别和用户选择逻辑。
 
 ## 2. 内容、选区与查找
 

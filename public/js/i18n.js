@@ -505,6 +505,10 @@ let currentLocale = null;
 
 export function detectLocale() {
   try {
+    const requested = new URLSearchParams(location.search).get("locale");
+    if (requested && STRINGS[requested]) return requested;
+  } catch {}
+  try {
     const saved = localStorage.getItem(LOCALE_KEY);
     if (saved && STRINGS[saved]) return saved;
   } catch {}
@@ -522,6 +526,15 @@ export function setLocale(loc) {
   if (!STRINGS[loc]) return;
   try { localStorage.setItem(LOCALE_KEY, loc); } catch {}
   currentLocale = loc;
+  // An SDK-provided locale is an initial value, not a permanent lock. Remove
+  // it before reloading so the user's explicit language switch can take over.
+  try {
+    const url = new URL(location.href);
+    if (url.searchParams.has("locale")) {
+      url.searchParams.delete("locale");
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+  } catch {}
   location.reload();
 }
 

@@ -4,10 +4,11 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import { createFindPanel, createSelectionHighlight, restoreSelection, saveSelection } from "../public/js/editor.js";
 import { History } from "../public/js/history.js";
+import { detectLocale } from "../public/js/i18n.js";
 
-function setup(html) {
+function setup(html, url = "http://localhost/") {
   const dom = new JSDOM('<div id="editor-wrap"><div id="editor"></div></div><div id="find-host"></div>', {
-    url: "http://localhost/", runScripts: "outside-only",
+    url, runScripts: "outside-only",
   });
   const { window } = dom;
   for (const key of ["window", "document", "NodeFilter", "InputEvent"])
@@ -178,4 +179,40 @@ test("SDK forwards a deleted comment id to the host callback", async () => {
   assert.deepEqual(deletedComment, { id: "comment-42" });
   sdk.destroy();
   dom.window.close();
+});
+
+test("SDK forwards a supported initial locale and rejects invalid values", async () => {
+  const { dom, window } = setup("<p>text</p>");
+  window.eval(await readFile(new URL("../public/js/sdk.js", import.meta.url), "utf8"));
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+
+  const sdk = window.DocEditor.init({ container, locale: "zh" });
+  assert.equal(new URL(sdk.iframe.src).searchParams.get("locale"), "zh");
+  sdk.destroy();
+
+  assert.throws(
+    () => window.DocEditor.init({ container, locale: "zh-CN" }),
+    /locale must be "zh" or "en"/,
+  );
+  assert.equal(container.children.length, 0);
+  dom.window.close();
+});
+
+test("editor locale parameter overrides a saved locale", () => {
+  const { dom, window } = setup("<p>text</p>", "http://localhost/?locale=zh");
+  window.localStorage.setItem("word-editor:locale", "en");
+  const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "location", { configurable: true, value: window.location });
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: window.localStorage });
+  try {
+    assert.equal(detectLocale(), "zh");
+  } finally {
+    if (locationDescriptor) Object.defineProperty(globalThis, "location", locationDescriptor);
+    else delete globalThis.location;
+    if (storageDescriptor) Object.defineProperty(globalThis, "localStorage", storageDescriptor);
+    else delete globalThis.localStorage;
+    dom.window.close();
+  }
 });

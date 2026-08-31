@@ -11,6 +11,7 @@
  *       mode: "edit",                        // "edit" | "view"
  *       toolbar: true,
  *       statusbar: true,
+ *       locale: "zh",                       // optional: "zh" | "en"
  *       user: "Alice",                       // presence name
  *       onReady(info)   {},
  *       onDocument(info){},                    // current document was opened/switched
@@ -83,6 +84,12 @@
     if (opts.mode === "view") q.set("mode", "view");
     if (opts.toolbar === false) q.set("toolbar", "0");
     if (opts.statusbar === false) q.set("statusbar", "0");
+    if (opts.locale != null) {
+      if (opts.locale !== "zh" && opts.locale !== "en") {
+        throw new TypeError('DocEditor.init: locale must be "zh" or "en"');
+      }
+      q.set("locale", opts.locale);
+    }
     if (opts.user) q.set("user", opts.user);
     if (opts.documentTitle) q.set("title", opts.documentTitle);
     if (opts.fileType) q.set("fileType", opts.fileType);
