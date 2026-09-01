@@ -22,7 +22,7 @@ services:
       # Change LEGALAI_BASE_URL when deploying this compose file elsewhere.
       TOKEN_SECRET: "4245afd2abbfdcdb4e960bcee70389902b47f1e0ca0d11fc992dc61ad4da293b"
       LEGALAI_BASE_URL: "https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai"
-      LEGALAI_CONTENT_PATH: "/zOffice/{docId}/content"
+      LEGALAI_CONTENT_PATH: "/doc-editor/{docId}/content"
       LEGALAI_TOKEN_HEADER: "token"
       LEGALAI_REQUEST_TIMEOUT_MS: "30000"
       # Draft autosave remains enabled inside word-editor. This switch only

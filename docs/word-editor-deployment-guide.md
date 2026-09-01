@@ -167,7 +167,7 @@ services:
       NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/host-ca-bundle.crt'
       TOKEN_SECRET: '替换为64位随机十六进制字符串'
       LEGALAI_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
-      LEGALAI_CONTENT_PATH: '/zOffice/{docId}/content'
+      LEGALAI_CONTENT_PATH: '/doc-editor/{docId}/content'
       LEGALAI_TOKEN_HEADER: 'token'
       LEGALAI_REQUEST_TIMEOUT_MS: '30000'
       LEGALAI_AUTO_COMMIT_ENABLED: 'false'

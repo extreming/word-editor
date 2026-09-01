@@ -24,13 +24,13 @@ flowchart LR
 
     subgraph BACKEND["③ LegalAI 后端服务"]
         AUTH["LoginInterceptor<br/>校验业务Token"]
-        FILEZ_GET["现有FileZ下载接口<br/>GET /zOffice/{docId}/content"]
-        FILEZ_POST["现有FileZ发布接口<br/>POST /zOffice/{docId}/content"]
+        DOC_EDITOR_GET["doc-editor下载接口<br/>GET /doc-editor/{docId}/content"]
+        DOC_EDITOR_POST["doc-editor发布接口<br/>POST /doc-editor/{docId}/content"]
         PUBLISH["FilezServiceImpl.publishDoc()"]
 
-        AUTH --> FILEZ_GET
-        AUTH --> FILEZ_POST
-        FILEZ_POST --> PUBLISH
+        AUTH --> DOC_EDITOR_GET
+        AUTH --> DOC_EDITOR_POST
+        DOC_EDITOR_POST --> PUBLISH
     end
 
     subgraph STORAGE["④ LegalAI 数据与文件存储"]
@@ -87,8 +87,8 @@ flowchart LR
    Word Editor 直接复用：
 
    ```
-   GET  /zOffice/{docId}/content    下载合同
-   POST /zOffice/{docId}/content    保存合同
+   GET  /doc-editor/{docId}/content    下载合同
+   POST /doc-editor/{docId}/content    保存合同
    ```
 
    正式保存后，LegalAI 继续按照原有 FileZ 逻辑：
@@ -150,14 +150,14 @@ flowchart LR
    |---|---|---|---|---|
    | LegalAI 前端页面 | word-editor 静态服务 | `GET /js/sdk.js` | 进入合同审查测试页 | 加载嵌入 SDK |
    | word-editor iframe | word-editor Node 服务 | `POST /api/integrations/legalai/session` | 每次打开或刷新编辑器令牌 | 使用 `docId + businessToken` 初始化会话 |
-   | word-editor Node 服务 | LegalAI 后端 | `GET /zOffice/{docId}/content` | 初始化会话 | 校验 LegalAI Token 并下载业务 DOCX |
+   | doc-editor Node 服务 | LegalAI 后端 | `GET /doc-editor/{docId}/content` | 初始化会话 | 校验 LegalAI Token 并下载业务 DOCX |
    | word-editor iframe | word-editor Node 服务 | `GET /api/documents/{docId}` | 会话初始化成功后 | 读取解析后的 HTML 草稿和 revision |
    | word-editor iframe | word-editor Node 服务 | `PUT /api/documents/{docId}` | 编辑后自动保存 | 保存本地草稿，使用 `baseRev` 检测冲突 |
    | word-editor iframe | word-editor Node 服务 | `WS /ws` | 编辑器打开期间 | 同一服务实例内的在线状态和编辑同步 |
    | word-editor iframe | word-editor Node 服务 | `POST /api/documents/{docId}/commit` | 保存按钮、`Ctrl+S`、SDK `save()/close()` | 生成最新 DOCX 并发起正式回写 |
-   | word-editor Node 服务 | LegalAI 后端 | `POST /zOffice/{docId}/content` | 正式保存 | 覆盖业务 DOCX，并由 LegalAI 更新业务元数据 |
+   | doc-editor Node 服务 | LegalAI 后端 | `POST /doc-editor/{docId}/content` | 正式保存 | 覆盖业务 DOCX，并由 LegalAI 更新业务元数据 |
 
-   LegalAI 业务后端不会主动调用 word-editor 的 `/api/*`。它只接收 word-editor Node 服务发起的 `/zOffice/{docId}/content` 下载和保存请求。
+   LegalAI 业务后端不会主动调用 doc-editor 的 `/api/*`。它只接收 doc-editor Node 服务发起的 `/doc-editor/{docId}/content` 下载和保存请求。原 `/zOffice/{docId}/content` 接口继续保留，仅用于兼容既有 FileZ 链路。
 
 10. REST 接口与 LegalAI 接入的关系
 

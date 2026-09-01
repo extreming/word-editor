@@ -153,7 +153,7 @@ docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word
 | `TOKEN_SECRET` | required for LegalAI | HMAC signing key for the short-lived document token issued by the LegalAI session endpoint |
 | `SOFFICE_PATH` | `soffice` (PATH lookup) | path to the LibreOffice binary used for legacy `.doc`/`.dot` conversion |
 | `LEGALAI_BASE_URL` | unset | LegalAI backend base URL, for example `https://legalai.example.com/legalai` |
-| `LEGALAI_CONTENT_PATH` | `/zOffice/{docId}/content` | existing FileZ-compatible download/save endpoint used by word-editor |
+| `LEGALAI_CONTENT_PATH` | `/doc-editor/{docId}/content` | LegalAI download/save endpoint used by doc-editor |
 | `LEGALAI_TOKEN_HEADER` | `token` | header used when forwarding the LegalAI business token |
 | `LEGALAI_REQUEST_TIMEOUT_MS` | `30000` | timeout for LegalAI download/save calls |
 | `LEGALAI_AUTO_COMMIT_ENABLED` | `false` | periodically publish the latest DOCX to LegalAI; internal draft autosave is unaffected |
@@ -185,7 +185,7 @@ const editor = DocEditor.init({
 
 The iframe exchanges that business token for a short-lived word-editor token
 only after the word-editor server successfully downloads
-`GET {LEGALAI_BASE_URL}/zOffice/{docId}/content`. Draft autosaves update only
+`GET {LEGALAI_BASE_URL}/doc-editor/{docId}/content`. Draft autosaves update only
 word-editor's local working directory. `Ctrl+S`, the File > Save action, the SDK
 `save()`/`close()` commands, and the best-effort browser `pagehide` hook call
 `POST /api/documents/{docId}/commit`; word-editor then uploads the generated

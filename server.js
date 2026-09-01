@@ -25,7 +25,7 @@ const HOST = process.env.HOST || "127.0.0.1";
 // Secret used to sign/verify short-lived scoped tokens (see server/scopedAuth.js).
 const TOKEN_SECRET = process.env.TOKEN_SECRET || "";
 const LEGALAI_BASE_URL = (process.env.LEGALAI_BASE_URL || "").replace(/\/$/, "");
-const LEGALAI_CONTENT_PATH = process.env.LEGALAI_CONTENT_PATH || "/zOffice/{docId}/content";
+const LEGALAI_CONTENT_PATH = process.env.LEGALAI_CONTENT_PATH || "/doc-editor/{docId}/content";
 const LEGALAI_TOKEN_HEADER = process.env.LEGALAI_TOKEN_HEADER || "token";
 const LEGALAI_REQUEST_TIMEOUT_MS = Math.max(Number(process.env.LEGALAI_REQUEST_TIMEOUT_MS) || 30000, 1000);
 const LEGALAI_AUTO_COMMIT_ENABLED = /^(1|true|yes)$/i.test(process.env.LEGALAI_AUTO_COMMIT_ENABLED || "false");
