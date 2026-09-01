@@ -172,6 +172,12 @@ services:
       LEGALAI_REQUEST_TIMEOUT_MS: '30000'
       LEGALAI_AUTO_COMMIT_ENABLED: 'false'
       VERSION_HISTORY_ENABLED: 'true'
+      DATA_RETENTION_HOURS: '24'
+      DATA_CLEANUP_INTERVAL_MS: '86400000'
+      STARTUP_DRAFT_PURGE_ENABLED: 'true'
+      DISK_CHECK_INTERVAL_MS: '300000'
+      DISK_WARNING_PERCENT: '70'
+      DISK_CRITICAL_PERCENT: '85'
     restart: unless-stopped
 ```
 
@@ -183,6 +189,11 @@ services:
 - `TOKEN_SECRET`、`LEGALAI_BASE_URL`：当前 Dev 部署直接固定在 Compose 中，不再依赖同目录 `.env`；复制到其他环境时必须替换为该环境的独立密钥和后端地址；
 - `LEGALAI_AUTO_COMMIT_ENABLED=false`：自动保存仍写本地草稿，只有保存按钮、`Ctrl+S`、SDK `save()/close()` 等正式保存动作才回写 LegalAI；
 - `VERSION_HISTORY_ENABLED=true`：保留内部历史版本；如果某环境明确不需要历史功能，可以改为 `false`；
+- 历史开启时，每个文档最多保留 10 份且只保留最近 3 天；
+- 成功执行 SDK `close()` 且该文档 WebSocket 在线人数归零后，会立即删除草稿、当前 DOCX、原始 DOCX 和历史文件；
+- 其他非活动 LegalAI 工作数据按 `DATA_RETENTION_HOURS=24` 清理；未确认成功回写的草稿也至少保留 24 小时；
+- 服务启动时清除草稿正文和全部历史，保留最小生命周期元数据供审计及后续 DOCX 回收；
+- 每日清理和磁盘检查写入 `DATA_DIR/cleanup-audit.log`；数据盘使用率达到 70% 输出 warning，达到 85% 输出 critical；
 - `:Z`：为 SELinux 环境添加挂载标签兼容性；本机检查时 SELinux 为 `Disabled`，保留该参数不影响使用；
 - `restart: unless-stopped`：Docker 服务重启后自动恢复容器，除非容器被人工停止；
 - 文件底部不再声明未使用的顶级命名卷。

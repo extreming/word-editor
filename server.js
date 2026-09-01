@@ -16,6 +16,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { mintToken, verifyToken } = require("./server/scopedAuth");
 const { createStorage } = require("./server/storage");
+const { createDataLifecycle, DAY_MS } = require("./server/dataLifecycle");
 const { convertToDocx: convertDocToDocx } = require("./server/docConvert");
 const { version: APP_VERSION } = require("./package.json");
 
@@ -30,8 +31,15 @@ const LEGALAI_REQUEST_TIMEOUT_MS = Math.max(Number(process.env.LEGALAI_REQUEST_T
 const LEGALAI_AUTO_COMMIT_ENABLED = /^(1|true|yes)$/i.test(process.env.LEGALAI_AUTO_COMMIT_ENABLED || "false");
 const LEGALAI_AUTO_COMMIT_INTERVAL_MS = Math.max(Number(process.env.LEGALAI_AUTO_COMMIT_INTERVAL_MS) || 300000, 60000);
 const VERSION_HISTORY_ENABLED = !/^(0|false|no)$/i.test(process.env.VERSION_HISTORY_ENABLED || "true");
+const STARTUP_DRAFT_PURGE_ENABLED = !/^(0|false|no)$/i.test(process.env.STARTUP_DRAFT_PURGE_ENABLED || "true");
+const DATA_RETENTION_MS = Math.max(Number(process.env.DATA_RETENTION_HOURS) || 24, 1) * 60 * 60 * 1000;
+const DATA_CLEANUP_INTERVAL_MS = Math.max(Number(process.env.DATA_CLEANUP_INTERVAL_MS) || DAY_MS, 60000);
+const DISK_CHECK_INTERVAL_MS = Math.max(Number(process.env.DISK_CHECK_INTERVAL_MS) || 300000, 60000);
+const DISK_WARNING_PERCENT = Math.min(Math.max(Number(process.env.DISK_WARNING_PERCENT) || 70, 1), 99);
+const DISK_CRITICAL_PERCENT = Math.min(Math.max(Number(process.env.DISK_CRITICAL_PERCENT) || 85, DISK_WARNING_PERCENT), 100);
 const MAX_BODY = 64 * 1024 * 1024; // 64 MB
-const MAX_VERSIONS = 30;
+const MAX_VERSIONS = 10;
+const VERSION_RETENTION_MS = 3 * DAY_MS;
 const VERSION_MIN_INTERVAL = 90 * 1000; // min ms between auto snapshots
 
 // Server-side reuse of the client's zero-dependency OOXML parser/exporter
@@ -80,6 +88,7 @@ const DATA = process.env.DATA_DIR
 // committed business documents; this directory supports editor drafts,
 // versions, the document library, and generated DOCX artifacts.
 const storage = createStorage(DATA);
+let dataLifecycle = null;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -174,7 +183,7 @@ async function readVersions(id) {
 async function snapshotVersion(id, meta, force = false) {
   if (!VERSION_HISTORY_ENABLED) return;
   if (meta.state == null) return;
-  const versions = await readVersions(id);
+  const versions = (await readVersions(id)).filter((version) => Number(version?.t) >= Date.now() - VERSION_RETENTION_MS);
   const last = versions[versions.length - 1];
   if (!force && last && Date.now() - last.t < VERSION_MIN_INTERVAL) return;
   if (last && last.state === meta.state && last.title === meta.title) return;
@@ -199,6 +208,9 @@ async function writeMeta(id, body, opts = {}) {
     tenantId: body.tenantId !== undefined ? (body.tenantId ? String(body.tenantId).slice(0, 200) : null) : (existing.tenantId || null),
     contractId: body.contractId !== undefined ? (body.contractId ? String(body.contractId).slice(0, 200) : null) : (existing.contractId || null),
     integration: body.integration !== undefined ? String(body.integration || "").slice(0, 50) : (existing.integration || null),
+    lastCommittedRev: opts.resetCommitState ? null : (existing.lastCommittedRev ?? null),
+    lastCommittedAt: opts.resetCommitState ? null : (existing.lastCommittedAt ?? null),
+    closeCommittedRev: opts.resetCommitState ? null : (existing.closeCommittedRev ?? null),
     createdAt: existing.createdAt,
     updatedAt: Date.now(),
     rev: (existing.rev || 0) + 1,
@@ -215,6 +227,15 @@ async function writeMeta(id, body, opts = {}) {
     ? await storage.exists(docxKey(id))
     : (body.state !== undefined ? await regenerateDocx(next) : await storage.exists(docxKey(id)));
   return next;
+}
+async function recordSuccessfulCommit(id, rev, reason) {
+  const latest = await readMeta(id);
+  if (!latest) return null;
+  latest.lastCommittedRev = rev;
+  latest.lastCommittedAt = Date.now();
+  if (reason === "close") latest.closeCommittedRev = rev;
+  await storage.writeFile(docKey(id), Buffer.from(JSON.stringify(latest)));
+  return latest;
 }
 function metaSummary(d) {
   return { id: d.id, title: d.title, updatedAt: d.updatedAt, createdAt: d.createdAt, rev: d.rev || 0 };
@@ -330,9 +351,19 @@ async function commitLegalAiDocument(id, businessToken, reason = "manual") {
   }
   if (!businessToken) throw Object.assign(new Error("LegalAI business token is required"), { status: 401 });
 
-  const session = legalAiSessions.get(id) || { lastCommittedRev: null, committing: false };
-  if (session.committing) return { ok: true, skipped: "commit-in-progress", rev: meta.rev };
-  if (session.lastCommittedRev === meta.rev) return { ok: true, skipped: "no-changes", rev: meta.rev };
+  const session = legalAiSessions.get(id) || { lastCommittedRev: meta.lastCommittedRev ?? null, committing: false };
+  if (session.committing) {
+    throw Object.assign(new Error("document commit is already in progress; retry close after it completes"), { status: 409 });
+  }
+  if (meta.lastCommittedRev === meta.rev) {
+    session.lastCommittedRev = meta.rev;
+    legalAiSessions.set(id, session);
+    if (reason === "close") {
+      await recordSuccessfulCommit(id, meta.rev, reason);
+      await cleanupClosedDocument(id, meta.rev);
+    }
+    return { ok: true, skipped: "no-changes", rev: meta.rev };
+  }
   session.businessToken = businessToken;
   session.committing = true;
   legalAiSessions.set(id, session);
@@ -341,6 +372,8 @@ async function commitLegalAiDocument(id, businessToken, reason = "manual") {
     if (!docxFresh) throw Object.assign(new Error("could not generate the current DOCX; LegalAI was not updated"), { status: 500 });
     const legalAi = await publishLegalAiDocument(meta, businessToken, reason);
     session.lastCommittedRev = meta.rev;
+    await recordSuccessfulCommit(id, meta.rev, reason);
+    if (reason === "close") await cleanupClosedDocument(id, meta.rev);
     return { ok: true, rev: meta.rev, reason, legalAi };
   } finally {
     session.committing = false;
@@ -485,7 +518,7 @@ async function api(req, res, url) {
     let bytes = await downloadLegalAiDocument(id, businessToken);
     const activeDocument = rooms.has(id) && rooms.get(id).size > 0 ? await readMeta(id) : null;
     if (activeDocument && activeDocument.integration === "legalai" && activeDocument.contractId === id) {
-      const currentSession = legalAiSessions.get(id) || { lastCommittedRev: activeDocument.rev, committing: false };
+      const currentSession = legalAiSessions.get(id) || { lastCommittedRev: activeDocument.lastCommittedRev ?? null, committing: false };
       currentSession.businessToken = businessToken;
       legalAiSessions.set(id, currentSession);
       const minted = mintToken(TOKEN_SECRET, {
@@ -524,7 +557,8 @@ async function api(req, res, url) {
       tenantId: body.tenantId,
       contractId: id,
       integration: "legalai",
-    }, { skipDocxRegen: true });
+    }, { skipDocxRegen: true, resetCommitState: true });
+    await recordSuccessfulCommit(id, document.rev, "bootstrap");
     legalAiSessions.set(id, { businessToken, lastCommittedRev: document.rev, committing: false });
 
     const minted = mintToken(TOKEN_SECRET, {
@@ -956,6 +990,22 @@ const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const rooms = new Map(); // docId -> Set<client>
 const COLORS = ["#e91e63", "#2196f3", "#4caf50", "#ff9800", "#9c27b0", "#00bcd4", "#795548", "#607d8b"];
 let clientSeq = 0;
+dataLifecycle = createDataLifecycle({
+  storage,
+  isDocumentActive: (docId) => rooms.has(docId) && rooms.get(docId).size > 0,
+  retentionMs: DATA_RETENTION_MS,
+  maxVersions: MAX_VERSIONS,
+  versionRetentionMs: VERSION_RETENTION_MS,
+  warningPercent: DISK_WARNING_PERCENT,
+  criticalPercent: DISK_CRITICAL_PERCENT,
+});
+
+async function cleanupClosedDocument(docId, expectedRev) {
+  if (!dataLifecycle) return false;
+  const removed = await dataLifecycle.cleanupAfterClose(docId, expectedRev);
+  if (removed) legalAiSessions.delete(docId);
+  return removed;
+}
 
 function encodeFrame(opcode, payload) {
   const len = payload.length;
@@ -995,7 +1045,13 @@ function leaveRoom(client) {
   const set = rooms.get(client.docId);
   if (!set) return;
   set.delete(client);
-  if (set.size === 0) rooms.delete(client.docId);
+  if (set.size === 0) {
+    const docId = client.docId;
+    rooms.delete(docId);
+    void cleanupClosedDocument(docId).catch((error) => {
+      console.error(`close cleanup failed for ${docId}:`, error.message);
+    });
+  }
   else broadcastLocal(client.docId, null, { type: "presence", users: roomUsers(client.docId) });
 }
 function closeRoom(docId) {
@@ -1158,4 +1214,27 @@ if (LEGALAI_AUTO_COMMIT_ENABLED) {
   }, LEGALAI_AUTO_COMMIT_INTERVAL_MS).unref();
   console.log(`LegalAI timed commit enabled (${LEGALAI_AUTO_COMMIT_INTERVAL_MS} ms)`);
 }
-server.listen(PORT, HOST, () => console.log(`word-editor on http://${HOST}:${PORT}`));
+
+setInterval(() => {
+  void dataLifecycle.runDailyCleanup().catch((error) => {
+    console.error("daily data cleanup failed:", error.message);
+  });
+}, DATA_CLEANUP_INTERVAL_MS).unref();
+
+setInterval(() => {
+  void dataLifecycle.checkDiskUsage().catch((error) => {
+    console.error("data disk usage check failed:", error.message);
+  });
+}, DISK_CHECK_INTERVAL_MS).unref();
+
+async function startServer() {
+  if (STARTUP_DRAFT_PURGE_ENABLED) await dataLifecycle.purgeDraftsAndHistoryOnStartup();
+  await dataLifecycle.runDailyCleanup();
+  await dataLifecycle.checkDiskUsage();
+  server.listen(PORT, HOST, () => console.log(`word-editor on http://${HOST}:${PORT}`));
+}
+
+void startServer().catch((error) => {
+  console.error("word-editor startup failed:", error);
+  process.exitCode = 1;
+});

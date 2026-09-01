@@ -2158,7 +2158,10 @@ async function main() {
   window.addEventListener("pagehide", () => {
     clearTimeout(legalAiTokenRefreshTimer);
     void autosaver.flush();
-    void commitLegalAiDocument(current.id, "close", true).catch(() => {});
+    // A browser lifecycle notification is not equivalent to a confirmed SDK
+    // close: it cannot await the draft flush and therefore must never trigger
+    // immediate local cleanup.
+    void commitLegalAiDocument(current.id, "pagehide", true).catch(() => {});
   });
 
   // ---------------------------------------------------------------

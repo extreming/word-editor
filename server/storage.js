@@ -26,6 +26,9 @@ function createStorage(dataDir) {
     async writeFile(key, buffer) {
       fs.writeFileSync(resolveKey(key), buffer);
     },
+    async appendFile(key, buffer) {
+      fs.appendFileSync(resolveKey(key), buffer);
+    },
     async deleteFile(key) {
       try {
         fs.unlinkSync(resolveKey(key));
@@ -38,6 +41,22 @@ function createStorage(dataDir) {
     },
     async listKeys(suffix) {
       return fs.readdirSync(dataDir).filter((file) => !suffix || file.endsWith(suffix));
+    },
+    async statFile(key) {
+      try {
+        const stat = fs.statSync(resolveKey(key));
+        return { size: stat.size, mtimeMs: stat.mtimeMs };
+      } catch (error) {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }
+    },
+    async diskUsage() {
+      const stat = fs.statfsSync(dataDir);
+      const blockSize = Number(stat.bsize);
+      const totalBytes = Number(stat.blocks) * blockSize;
+      const freeBytes = Number(stat.bavail) * blockSize;
+      return { totalBytes, freeBytes, usedBytes: Math.max(totalBytes - freeBytes, 0) };
     },
   };
 }

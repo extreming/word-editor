@@ -30,5 +30,13 @@ services:
       LEGALAI_AUTO_COMMIT_ENABLED: "false"
       LEGALAI_AUTO_COMMIT_INTERVAL_MS: "300000"
       VERSION_HISTORY_ENABLED: "false"
+      # Local working-data lifecycle. Successful SDK close + last WebSocket
+      # departure cleans immediately; the daily sweep applies the 24h fallback.
+      DATA_RETENTION_HOURS: "24"
+      DATA_CLEANUP_INTERVAL_MS: "86400000"
+      STARTUP_DRAFT_PURGE_ENABLED: "true"
+      DISK_CHECK_INTERVAL_MS: "300000"
+      DISK_WARNING_PERCENT: "70"
+      DISK_CRITICAL_PERCENT: "85"
 
     restart: unless-stopped

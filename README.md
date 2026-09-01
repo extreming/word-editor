@@ -159,6 +159,11 @@ docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word
 | `LEGALAI_AUTO_COMMIT_ENABLED` | `false` | periodically publish the latest DOCX to LegalAI; internal draft autosave is unaffected |
 | `LEGALAI_AUTO_COMMIT_INTERVAL_MS` | `300000` | periodic LegalAI publication interval; minimum 60 seconds |
 | `VERSION_HISTORY_ENABLED` | `true` | word-editor internal snapshots; set `false` for the current LegalAI integration |
+| `DATA_RETENTION_HOURS` | `24` | inactivity period before committed or unconfirmed LegalAI working files are removed |
+| `DATA_CLEANUP_INTERVAL_MS` | `86400000` | periodic lifecycle sweep interval; minimum 60 seconds |
+| `STARTUP_DRAFT_PURGE_ENABLED` | `true` | on startup remove history and scrub draft payloads while retaining lifecycle metadata |
+| `DISK_CHECK_INTERVAL_MS` | `300000` | local data filesystem usage check interval; minimum 60 seconds |
+| `DISK_WARNING_PERCENT` / `DISK_CRITICAL_PERCENT` | `70` / `85` | warning and critical disk-usage thresholds |
 
 ### LegalAI business-document integration
 
@@ -208,7 +213,19 @@ public/embed-example.html   SDK demo
 Storage files under `DATA_DIR`: `<id>.json` (state + pageSetup + rev + tenantId/contractId),
 `<id>.source.docx` (immutable imported OOXML source), `<id>.docx` (current merged
 artifact regenerated from HTML while retaining preserved OOXML objects),
-`<id>.versions.json` (history).
+`<id>.versions.json` (history), and `cleanup-audit.log` (JSON-lines lifecycle
+audit records). History is capped at 10 snapshots and three days.
+
+For LegalAI documents, a successful write-back persists `lastCommittedRev` in
+the metadata. A successful SDK `close()` followed by the last WebSocket leaving
+the document room removes all four working files immediately. Otherwise a daily
+sweep removes inactive committed documents after 24 hours and retains an
+unconfirmed draft for 24 hours before removing it. Browser `pagehide` is only a
+best-effort save signal and does not trigger immediate cleanup. On process start,
+draft content and history are removed; minimal metadata is retained temporarily
+so remaining DOCX artifacts can still be audited and reclaimed by the 24-hour
+sweep. Disk usage is checked every five minutes, with warning and critical
+audit events at 70% and 85%.
 
 ## Requirements coverage — honest status
 
