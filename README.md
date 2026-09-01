@@ -152,18 +152,20 @@ docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word
 | `DATA_DIR` | `./data` | local working directory for drafts, versions, and generated DOCX files |
 | `TOKEN_SECRET` | required for LegalAI | HMAC signing key for the short-lived document token issued by the LegalAI session endpoint |
 | `SOFFICE_PATH` | `soffice` (PATH lookup) | path to the LibreOffice binary used for legacy `.doc`/`.dot` conversion |
-| `LEGALAI_BASE_URL` | unset | LegalAI backend base URL, for example `https://legalai.example.com/legalai` |
-| `LEGALAI_CONTENT_PATH` | `/doc-editor/{docId}/content` | LegalAI download/save endpoint used by doc-editor |
-| `LEGALAI_TOKEN_HEADER` | `token` | header used when forwarding the LegalAI business token |
-| `LEGALAI_REQUEST_TIMEOUT_MS` | `30000` | timeout for LegalAI download/save calls |
-| `LEGALAI_AUTO_COMMIT_ENABLED` | `false` | periodically publish the latest DOCX to LegalAI; internal draft autosave is unaffected |
-| `LEGALAI_AUTO_COMMIT_INTERVAL_MS` | `300000` | periodic LegalAI publication interval; minimum 60 seconds |
+| `BUSINESS_API_BASE_URL` | unset | host business-system API base URL |
+| `BUSINESS_DOCUMENT_CONTENT_PATH` | `/doc-editor/{docId}/content` | host endpoint used to download and publish a business document |
+| `BUSINESS_TOKEN_HEADER` | `token` | header used when forwarding the host business token |
+| `BUSINESS_REQUEST_TIMEOUT_MS` | `30000` | timeout for host business-system requests |
+| `BUSINESS_AUTO_COMMIT_ENABLED` | `false` | periodically publish the latest DOCX to the host system; internal draft autosave is unaffected |
+| `BUSINESS_AUTO_COMMIT_INTERVAL_MS` | `300000` | periodic host-system publication interval; minimum 60 seconds |
 | `VERSION_HISTORY_ENABLED` | `true` | word-editor internal snapshots; set `false` for the current LegalAI integration |
 | `DATA_RETENTION_HOURS` | `24` | inactivity period before committed or unconfirmed LegalAI working files are removed |
 | `DATA_CLEANUP_INTERVAL_MS` | `86400000` | periodic lifecycle sweep interval; minimum 60 seconds |
 | `STARTUP_DRAFT_PURGE_ENABLED` | `true` | on startup remove history and scrub draft payloads while retaining lifecycle metadata |
 | `DISK_CHECK_INTERVAL_MS` | `300000` | local data filesystem usage check interval; minimum 60 seconds |
 | `DISK_WARNING_PERCENT` / `DISK_CRITICAL_PERCENT` | `70` / `85` | warning and critical disk-usage thresholds |
+
+The previous `LEGALAI_*` environment-variable names remain supported as deprecated aliases. When both forms are set, the corresponding `BUSINESS_*` value takes precedence.
 
 ### LegalAI business-document integration
 
@@ -185,7 +187,7 @@ const editor = DocEditor.init({
 
 The iframe exchanges that business token for a short-lived word-editor token
 only after the word-editor server successfully downloads
-`GET {LEGALAI_BASE_URL}/doc-editor/{docId}/content`. Draft autosaves update only
+`GET {BUSINESS_API_BASE_URL}/doc-editor/{docId}/content`. Draft autosaves update only
 word-editor's local working directory. `Ctrl+S`, the File > Save action, the SDK
 `save()`/`close()` commands, and the best-effort browser `pagehide` hook call
 `POST /api/documents/{docId}/commit`; word-editor then uploads the generated

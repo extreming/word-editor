@@ -96,9 +96,9 @@ docker-compose.yml
 
 ## 4. Docker Compose 配置
 
-### 4.1 固定 `TOKEN_SECRET` 和 LegalAI 地址
+### 4.1 固定 `TOKEN_SECRET` 和宿主业务系统地址
 
-`TOKEN_SECRET` 用于签名和验证 word-editor 内部的短期文档令牌，它不是 LegalAI 登录 Token。当前 Dev 部署根据项目要求将它和 `LEGALAI_BASE_URL` 直接写在 `docker-compose.yml` 中，不再依赖 `.env`。
+`TOKEN_SECRET` 用于签名和验证 doc-editor 内部的短期文档令牌，它不是宿主业务系统的登录 Token。当前 Dev 部署根据项目要求将它和 `BUSINESS_API_BASE_URL` 直接写在 `docker-compose.yml` 中，不再依赖 `.env`。
 
 每个环境仍应使用不同的 32 字节随机密钥。需要轮换时可以生成新值，再替换 Compose 中的 `TOKEN_SECRET`：
 
@@ -116,7 +116,7 @@ Compose 中的配置形式：
 
 ```yaml
 TOKEN_SECRET: '替换为64位随机十六进制字符串'
-LEGALAI_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
+BUSINESS_API_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
 ```
 
 注意：
@@ -124,7 +124,7 @@ LEGALAI_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.c
 - 不要在工单、聊天或截图中发送 `TOKEN_SECRET`；
 - 密钥会进入 Compose 文件和代码历史，仓库访问权限必须受控；
 - 轮换 `TOKEN_SECRET` 会立即使已经签发的文档临时令牌失效，轮换后需要重新打开编辑器会话；
-- 复制到测试或生产环境时，必须同时替换密钥和 `LEGALAI_BASE_URL`；
+- 复制到测试、生产环境或其他项目组时，必须同时替换密钥和 `BUSINESS_API_BASE_URL`；
 
 ### 4.2 内网 CA 证书
 
@@ -166,11 +166,11 @@ services:
       DATA_DIR: '/app/data'
       NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/host-ca-bundle.crt'
       TOKEN_SECRET: '替换为64位随机十六进制字符串'
-      LEGALAI_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
-      LEGALAI_CONTENT_PATH: '/doc-editor/{docId}/content'
-      LEGALAI_TOKEN_HEADER: 'token'
-      LEGALAI_REQUEST_TIMEOUT_MS: '30000'
-      LEGALAI_AUTO_COMMIT_ENABLED: 'false'
+      BUSINESS_API_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
+      BUSINESS_DOCUMENT_CONTENT_PATH: '/doc-editor/{docId}/content'
+      BUSINESS_TOKEN_HEADER: 'token'
+      BUSINESS_REQUEST_TIMEOUT_MS: '30000'
+      BUSINESS_AUTO_COMMIT_ENABLED: 'false'
       VERSION_HISTORY_ENABLED: 'true'
       DATA_RETENTION_HOURS: '24'
       DATA_CLEANUP_INTERVAL_MS: '86400000'
@@ -186,8 +186,9 @@ services:
 - `127.0.0.1:3001:3001`：仅允许服务器本机访问应用端口，由 Nginx 对外代理；
 - `/home/aiadmin/word-editor/data:/app/data`：保存编辑器草稿、版本和生成的 DOCX；这些是编辑器工作数据，不是 LegalAI 正式业务文档的最终存储；
 - `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`：直接复用宿主机系统 CA 信任库，只读挂载，不属于 word-editor 发布文件；
-- `TOKEN_SECRET`、`LEGALAI_BASE_URL`：当前 Dev 部署直接固定在 Compose 中，不再依赖同目录 `.env`；复制到其他环境时必须替换为该环境的独立密钥和后端地址；
-- `LEGALAI_AUTO_COMMIT_ENABLED=false`：自动保存仍写本地草稿，只有保存按钮、`Ctrl+S`、SDK `save()/close()` 等正式保存动作才回写 LegalAI；
+- `TOKEN_SECRET`、`BUSINESS_API_BASE_URL`：当前 Dev 部署直接固定在 Compose 中，不再依赖同目录 `.env`；复制到其他环境或其他项目组时必须替换为各自的独立密钥和后端地址；
+- `BUSINESS_AUTO_COMMIT_ENABLED=false`：自动保存仍写本地草稿，只有保存按钮、`Ctrl+S`、SDK `save()/close()` 等正式保存动作才回写宿主业务系统；
+- 旧版 `LEGALAI_*` 环境变量仍作为兼容别名保留；新旧变量同时存在时优先使用 `BUSINESS_*`；
 - `VERSION_HISTORY_ENABLED=true`：保留内部历史版本；如果某环境明确不需要历史功能，可以改为 `false`；
 - 历史开启时，每个文档最多保留 10 份且只保留最近 3 天；
 - 成功执行 SDK `close()` 且该文档 WebSocket 在线人数归零后，会立即删除草稿、当前 DOCX、原始 DOCX 和历史文件；

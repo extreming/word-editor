@@ -24,12 +24,25 @@ const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "127.0.0.1";
 // Secret used to sign/verify short-lived scoped tokens (see server/scopedAuth.js).
 const TOKEN_SECRET = process.env.TOKEN_SECRET || "";
-const LEGALAI_BASE_URL = (process.env.LEGALAI_BASE_URL || "").replace(/\/$/, "");
-const LEGALAI_CONTENT_PATH = process.env.LEGALAI_CONTENT_PATH || "/doc-editor/{docId}/content";
-const LEGALAI_TOKEN_HEADER = process.env.LEGALAI_TOKEN_HEADER || "token";
-const LEGALAI_REQUEST_TIMEOUT_MS = Math.max(Number(process.env.LEGALAI_REQUEST_TIMEOUT_MS) || 30000, 1000);
-const LEGALAI_AUTO_COMMIT_ENABLED = /^(1|true|yes)$/i.test(process.env.LEGALAI_AUTO_COMMIT_ENABLED || "false");
-const LEGALAI_AUTO_COMMIT_INTERVAL_MS = Math.max(Number(process.env.LEGALAI_AUTO_COMMIT_INTERVAL_MS) || 300000, 60000);
+const BUSINESS_API_BASE_URL = (
+  process.env.BUSINESS_API_BASE_URL || process.env.LEGALAI_BASE_URL || ""
+).replace(/\/$/, "");
+const BUSINESS_DOCUMENT_CONTENT_PATH =
+  process.env.BUSINESS_DOCUMENT_CONTENT_PATH ||
+  process.env.LEGALAI_CONTENT_PATH ||
+  "/doc-editor/{docId}/content";
+const BUSINESS_TOKEN_HEADER = process.env.BUSINESS_TOKEN_HEADER || process.env.LEGALAI_TOKEN_HEADER || "token";
+const BUSINESS_REQUEST_TIMEOUT_MS = Math.max(
+  Number(process.env.BUSINESS_REQUEST_TIMEOUT_MS || process.env.LEGALAI_REQUEST_TIMEOUT_MS) || 30000,
+  1000
+);
+const BUSINESS_AUTO_COMMIT_ENABLED = /^(1|true|yes)$/i.test(
+  process.env.BUSINESS_AUTO_COMMIT_ENABLED || process.env.LEGALAI_AUTO_COMMIT_ENABLED || "false"
+);
+const BUSINESS_AUTO_COMMIT_INTERVAL_MS = Math.max(
+  Number(process.env.BUSINESS_AUTO_COMMIT_INTERVAL_MS || process.env.LEGALAI_AUTO_COMMIT_INTERVAL_MS) || 300000,
+  60000
+);
 const VERSION_HISTORY_ENABLED = !/^(0|false|no)$/i.test(process.env.VERSION_HISTORY_ENABLED || "true");
 const STARTUP_DRAFT_PURGE_ENABLED = !/^(0|false|no)$/i.test(process.env.STARTUP_DRAFT_PURGE_ENABLED || "true");
 const DATA_RETENTION_MS = Math.max(Number(process.env.DATA_RETENTION_HOURS) || 24, 1) * 60 * 60 * 1000;
@@ -248,20 +261,20 @@ function metaSummary(d) {
 const legalAiSessions = new Map(); // docId -> { businessToken, lastCommittedRev, committing }
 
 function legalAiContentUrl(docId) {
-  if (!LEGALAI_BASE_URL) throw Object.assign(new Error("LEGALAI_BASE_URL is not configured"), { status: 503 });
-  const relative = LEGALAI_CONTENT_PATH.replace("{docId}", encodeURIComponent(docId));
-  return LEGALAI_BASE_URL + (relative.startsWith("/") ? relative : `/${relative}`);
+  if (!BUSINESS_API_BASE_URL) throw Object.assign(new Error("BUSINESS_API_BASE_URL is not configured"), { status: 503 });
+  const relative = BUSINESS_DOCUMENT_CONTENT_PATH.replace("{docId}", encodeURIComponent(docId));
+  return BUSINESS_API_BASE_URL + (relative.startsWith("/") ? relative : `/${relative}`);
 }
 
 function legalAiHeaders(businessToken, extra = {}) {
-  return { [LEGALAI_TOKEN_HEADER]: businessToken, ...extra };
+  return { [BUSINESS_TOKEN_HEADER]: businessToken, ...extra };
 }
 
 async function legalAiFetch(url, options) {
   try {
     return await fetch(url, {
       ...options,
-      signal: AbortSignal.timeout(LEGALAI_REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(BUSINESS_REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
     const cause = error?.cause;
@@ -1198,7 +1211,7 @@ setInterval(() => {
   }
 }, 30000).unref();
 
-if (LEGALAI_AUTO_COMMIT_ENABLED) {
+if (BUSINESS_AUTO_COMMIT_ENABLED) {
   setInterval(async () => {
     for (const [id, session] of legalAiSessions) {
       if (!session.businessToken || session.committing) continue;
@@ -1211,8 +1224,8 @@ if (LEGALAI_AUTO_COMMIT_ENABLED) {
         console.error(`LegalAI timed commit failed for ${id}:`, e.message);
       }
     }
-  }, LEGALAI_AUTO_COMMIT_INTERVAL_MS).unref();
-  console.log(`LegalAI timed commit enabled (${LEGALAI_AUTO_COMMIT_INTERVAL_MS} ms)`);
+  }, BUSINESS_AUTO_COMMIT_INTERVAL_MS).unref();
+  console.log(`LegalAI timed commit enabled (${BUSINESS_AUTO_COMMIT_INTERVAL_MS} ms)`);
 }
 
 setInterval(() => {

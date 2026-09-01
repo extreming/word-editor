@@ -18,17 +18,16 @@ services:
       STORAGE_DRIVER: "local"
       SOFFICE_PATH: "/usr/bin/soffice"
       NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/host-ca-bundle.crt"
-      # LegalAI development environment integration.
-      # Change LEGALAI_BASE_URL when deploying this compose file elsewhere.
+      # Host business-system integration. Replace these values for each project.
       TOKEN_SECRET: "4245afd2abbfdcdb4e960bcee70389902b47f1e0ca0d11fc992dc61ad4da293b"
-      LEGALAI_BASE_URL: "https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai"
-      LEGALAI_CONTENT_PATH: "/doc-editor/{docId}/content"
-      LEGALAI_TOKEN_HEADER: "token"
-      LEGALAI_REQUEST_TIMEOUT_MS: "30000"
+      BUSINESS_API_BASE_URL: "https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai"
+      BUSINESS_DOCUMENT_CONTENT_PATH: "/doc-editor/{docId}/content"
+      BUSINESS_TOKEN_HEADER: "token"
+      BUSINESS_REQUEST_TIMEOUT_MS: "30000"
       # Draft autosave remains enabled inside word-editor. This switch only
-      # controls periodic publication of the complete DOCX to LegalAI/S3.
-      LEGALAI_AUTO_COMMIT_ENABLED: "false"
-      LEGALAI_AUTO_COMMIT_INTERVAL_MS: "300000"
+      # controls periodic publication of the complete DOCX to the business system.
+      BUSINESS_AUTO_COMMIT_ENABLED: "false"
+      BUSINESS_AUTO_COMMIT_INTERVAL_MS: "300000"
       VERSION_HISTORY_ENABLED: "false"
       # Local working-data lifecycle. Successful SDK close + last WebSocket
       # departure cleans immediately; the daily sweep applies the 24h fallback.
