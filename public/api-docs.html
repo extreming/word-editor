@@ -5,63 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DocEditor — API reference</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
-  <style>
-    body { margin: 0; background: #f5f6f8; }
-    .sdk-hero { margin: 16px 32px; padding: 20px 24px; background: #fff; border: 1px solid #d8dbe2; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
-    .sdk-hero h2 { margin: 0 0 4px; font-size: 18px; }
-    .sdk-hero p { margin: 0 0 8px; color: #555; font-size: 14px; }
-    .sdk-hero code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: #eef1f6; padding: 1px 5px; border-radius: 3px; }
-    .sdk-hero .example { background: #1e2430; color: #b9e0b9; padding: 12px 16px; border-radius: 6px; font: 12px/1.6 ui-monospace, Menlo, monospace; overflow-x: auto; margin: 8px 0 0; }
-    table.cmds { width: 100%; border-collapse: collapse; font-size: 13px; }
-    table.cmds th, table.cmds td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #d8dbe2; vertical-align: top; }
-    table.cmds th { background: #eef1f6; font-weight: 600; position: sticky; top: 0; }
-    table.cmds td:first-child { font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
-    table.cmds td:nth-child(2) { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
-    .badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 8px; font-weight: 600; }
-    .badge.sdk { background: #dbe6f5; color: #1c3a6b; }
-    .badge.rest { background: #d9f5e2; color: #1a7f37; }
-    .badge.get { background: #d0ebff; color: #1864ab; }
-    .badge.put { background: #ffd8a8; color: #a15800; }
-    .badge.post { background: #d3f9d8; color: #2b8a3e; }
-    .badge.del { background: #ffe3e3; color: #c0392b; }
-    .tagline { display: flex; gap: 13px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
-    .tagline a { font-size: 13px; color: #2b579a; text-decoration: none; font-weight: 600; }
-    .tagline a:hover { text-decoration: underline; }
-    .api-grid { display: flex; gap: 24px; margin: 16px 32px; align-items: flex-start; }
-    .api-grid > div { flex: 1; min-width: 0; }
-    .sdk-panel { background: #fff; border: 1px solid #d8dbe2; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 60px); }
-    .sdk-panel h2 { margin: 0; padding: 14px 18px; font-size: 15px; background: #f0f3f8; border-bottom: 1px solid #d8dbe2; }
-    .sdk-panel .scroll { overflow: auto; flex: 1; }
-    .sdk-panel table { font-size: 13px; }
-    .sdk-panel table th { position: sticky; top: 0; z-index: 2; }
-    .sep { color: #bbb; padding: 0 4px; }
-    .menu-bar { display: flex; align-items: center; gap: 16px; padding: 12px 32px; background: #1e2430; color: #fff; }
-    .menu-bar h1 { font-size: 16px; margin: 0; font-weight: 600; }
-    .menu-bar a { color: #8ab4ff; text-decoration: none; font-size: 13px; }
-    .menu-bar a:hover { text-decoration: underline; }
-    .menu-bar .tabs { display: flex; gap: 8px; margin-left: auto; }
-    .menu-bar .tabs a { color: #ccc; padding: 4px 12px; border-radius: 4px; font-size: 13px; }
-    .menu-bar .tabs a.active { color: #fff; background: #2b579a; }
-    .swagger-wrap { padding: 0 10px; }
-    @media (max-width: 900px) {
-      .api-grid { flex-direction: column; margin: 12px; }
-      .sdk-hero { margin: 12px; }
-      .menu-bar { flex-wrap: wrap; padding: 10px 16px; }
-    }
-  </style>
+  <link rel="stylesheet" href="/api-docs.css">
 </head>
 <body>
 
   <div class="menu-bar">
     <h1 data-i18n="apiDocs.title">DocEditor API reference</h1>
     <div class="tabs">
-      <a href="#" class="active" data-tab="rest" onclick="showTab('rest')" data-i18n="apiDocs.tab.rest">REST API (Swagger)</a>
-      <a href="#" data-tab="sdk" onclick="showTab('sdk')" data-i18n="apiDocs.tab.sdk">SDK commands</a>
-      <a href="#" data-tab="restclient" onclick="showTab('restclient')" data-i18n="apiDocs.tab.restclient">REST client</a>
+      <a href="#rest" class="active" data-tab="rest" data-i18n="apiDocs.tab.rest">REST API (Swagger)</a>
+      <a href="#sdk" data-tab="sdk" data-i18n="apiDocs.tab.sdk">SDK commands</a>
+      <a href="#restclient" data-tab="restclient" data-i18n="apiDocs.tab.restclient">REST client</a>
     </div>
   </div>
-  <div id="btn-lang-wrap" style="text-align:right;padding:6px 32px;background:#1e2430">
-    <button id="btn-lang" data-i18n="lang.switchTo" style="font:12px inherit;color:#8ab4ff;background:none;border:1px solid #3a4560;border-radius:6px;padding:3px 10px;cursor:pointer">中文</button>
+  <div id="btn-lang-wrap">
+    <button id="btn-lang" data-i18n="lang.switchTo">中文</button>
   </div>
 
 <div id="sdk-panel" style="display:none">
@@ -69,12 +26,15 @@
     <h2 data-i18n="apiDocs.h2.embedIntro">Embed DocEditor via iframe + JS SDK</h2>
     <p>
       The <code>DocEditor</code> SDK creates an iframe hosting the editor in another
-      origin (or same-origin) and exposes every editor action over
+      origin (or same-origin) and exposes the commands listed below over
       <code>window.postMessage</code>.  Include
       <code>&lt;script src=&quot;http://editor-host/js/sdk.js&quot;&gt;&lt;/script&gt;</code>
       then call <code>DocEditor.init()</code>.
     </p>
-    <div class="example">
+    <p data-i18n="apiDocs.sdkSource">This reference is maintained manually against /js/sdk.js and the editor message handlers. It is not generated from source code.</p>
+    <details>
+      <summary data-i18n="apiDocs.example">Integration example (expand to view)</summary>
+    <pre class="example">
 // ─── bootstrap ───
 const ed = DocEditor.init({
   container: "#editor-holder",  // CSS selector or Element
@@ -85,7 +45,7 @@ const ed = DocEditor.init({
   onChange(info) { console.log("change", info); },
 });
 
-// ─── all SDK methods return Promises ───
+// ─── command methods return Promises; destroy() is synchronous ───
 const meta  = await ed.getMeta();
 const html  = (await ed.getContent()).html;
 await ed.setContent("&lt;p&gt;Hello&lt;/p&gt;");
@@ -99,8 +59,10 @@ await ed.addComment("Review this paragraph");
 const { matches } = await ed.find("term", { matchCase:false, regex:false });
 if (matches > 0) await ed.highlightSelection(); // temporary orange background / white text
 await ed.clearHighlight();                     // restore the selection's original styles
+await ed.close(); // wait for save before removing the iframe
 ed.destroy();
-    </div>
+    </pre>
+    </details>
   </div>
 
   <div class="api-grid">
@@ -117,9 +79,10 @@ ed.destroy();
             <tr><td>insertHtml</td><td><code>html</code></td><td><code>{ok:true}</code></td><td>insertHtml</td></tr>
             <tr><td>getMeta</td><td>—</td><td><code>{id,title,rev,words,chars,pageSetup,trackChanges,commentCount}</code></td><td>getMeta</td></tr>
             <tr><td>setTitle</td><td><code>title</code></td><td><code>{ok:true}</code></td><td>setTitle</td></tr>
-            <tr><td>save</td><td>—</td><td><code>{ok:true, rev}</code></td><td>save</td></tr>
+            <tr><td>save</td><td>—</td><td><code>{ok:true, rev, result}</code></td><td>save</td></tr>
+            <tr><td>close</td><td>—</td><td><code>{ok:true, rev, result}</code></td><td>close</td></tr>
             <tr><td>focus</td><td>—</td><td><code>{ok:true}</code></td><td>focus</td></tr>
-            <tr><td>getSelectedText</td><td>—</td><td><code>{text, html}</code></td><td>getSelectedText</td></tr>
+            <tr><td>getSelectedText</td><td>—</td><td><code>{text, html}</code>; currently both fields contain plain text</td><td>getSelectedText</td></tr>
             <tr><td>undo</td><td>—</td><td><code>{ok, canUndo, canRedo}</code></td><td>undo</td></tr>
             <tr><td>redo</td><td>—</td><td><code>{ok, canUndo, canRedo}</code></td><td>redo</td></tr>
             <tr><td>canUndo</td><td>—</td><td><code>{canUndo, canRedo}</code></td><td>canUndo</td></tr>
@@ -276,8 +239,9 @@ ed.destroy();
         <table class="cmds">
           <thead><tr><th><span data-i18n="apiDocs.th.method">Method</span></th><th><span data-i18n="apiDocs.th.description">Description</span></th></tr></thead>
           <tbody>
-            <tr><td>destroy</td><td>Removes the iframe, tears down the message listener, rejects pending calls.</td></tr>
-            <tr><td>iframe</td><td>The underlying &lt;iframe&gt; element (read-only property).</td></tr>
+            <tr><td>destroy</td><td>Synchronously removes the iframe and message listener, and clears the pending-call map. Does not save or settle pending Promises. Await <code>close()</code> before destroying.</td></tr>
+            <tr><td>iframe</td><td>The underlying &lt;iframe&gt; element reference.</td></tr>
+            <tr><td colspan="2"><code>save()</code> flushes the draft and performs business write-back for integrated documents. <code>close()</code> uses the same save flow with reason <code>close</code>; it does not remove the iframe. Both commands have a 60-second SDK timeout.</td></tr>
           </tbody>
         </table>
       </div>
@@ -285,7 +249,7 @@ ed.destroy();
 
     <div class="sdk-panel">
       <h2 data-i18n="apiDocs.h2.initOptions">Init options</h2>
-      <div class="scroll" style="padding:8px 14px; font-size:13px; line-height:1.7;">
+      <div class="scroll">
         <table class="cmds">
           <thead><tr><th><span data-i18n="apiDocs.th.option">Option</span></th><th><span data-i18n="apiDocs.th.type">Type</span></th><th><span data-i18n="apiDocs.th.default">Default</span></th><th><span data-i18n="apiDocs.th.description">Description</span></th></tr></thead>
           <tbody>
@@ -297,11 +261,16 @@ ed.destroy();
             <tr><td>statusbar</td><td>boolean</td><td>true</td><td>Show the status bar inside the iframe</td></tr>
             <tr><td>locale</td><td><code>"zh"|"en"</code></td><td>saved/browser locale</td><td>Initial editor UI language</td></tr>
             <tr><td>user</td><td>string</td><td>guest</td><td>Display name for presence / authorship</td></tr>
+            <tr><td>documentTitle</td><td>string</td><td>—</td><td>Initial title for the business document session</td></tr>
+            <tr><td>fileType</td><td>string</td><td>docx</td><td>Business source file type; legacy doc/dot conversion requires LibreOffice on the server</td></tr>
+            <tr><td>tenantId</td><td>string | number</td><td>—</td><td>Tenant context for the business document session</td></tr>
+            <tr><td>history</td><td>boolean</td><td>true</td><td>Set false to hide the version-history entry</td></tr>
+            <tr><td>businessToken</td><td>string</td><td>—</td><td>Business session credential; passed in the iframe URL fragment and exchanged for a scoped editor token</td></tr>
             <tr><td>onReady</td><td>function</td><td>—</td><td>Fires when the editor finishes loading</td></tr>
             <tr><td>onDocument</td><td>function</td><td>—</td><td>Fires when the current document is opened or switched</td></tr>
             <tr><td>onChange</td><td>function</td><td>—</td><td>Fires on every content change (throttled)</td></tr>
             <tr><td>onSave</td><td>function</td><td>—</td><td>Fires when a save round-trip completes</td></tr>
-            <tr><td>onCommentDelete</td><td>function</td><td><code>{id}</code></td><td>Fires after a comment is deleted in the editor</td></tr>
+            <tr><td>onCommentDelete</td><td>function</td><td>—</td><td>Receives <code>{id}</code> after local deletion and save scheduling; does not confirm persistence</td></tr>
             <tr><td>onPresence</td><td>function</td><td>—</td><td>Fires on presence updates (users joining/leaving)</td></tr>
             <tr><td>onError</td><td>function</td><td>—</td><td>Fires on errors</td></tr>
           </tbody>
@@ -317,13 +286,17 @@ ed.destroy();
 
 <div id="rest-client-panel" style="display:none">
   <div class="sdk-hero">
-    <h2 data-i18n="apiDocs.h2.restClientIntro">DocEditorRestClient — use the full API over HTTP</h2>
+    <h2 data-i18n="apiDocs.h2.restClientIntro">DocEditorRestClient — document operations over HTTP</h2>
     <p>
-      <code>DocEditorRestClient</code> mirrors the embed SDK's method names but talks
-      to the server directly via REST API calls.  No iframe, no postMessage — any
-      HTTP client (curl, Python, Postman) can use these same endpoints.
+      <code>DocEditorRestClient</code> provides browser JavaScript helpers around
+      the REST API. HTTP clients (curl, Python, Postman) can call the endpoints directly.
+      Some SDK-like methods are local helpers, no-ops, or unsupported; see the capability notes below.
     </p>
-    <div class="example">
+    <p data-i18n="apiDocs.restSource">This reference is maintained manually against /js/api-client.js and server.js. The client does not attach authentication tokens; integrated documents require an authenticated HTTP request or the embed SDK.</p>
+    <details>
+      <summary data-i18n="apiDocs.example">Integration example (expand to view)</summary>
+    <pre class="example">
+// Load /js/api-client.js with a script tag before running this example.
 // Browser usage
 const api = new DocEditorRestClient("http://localhost:3001");
 
@@ -358,7 +331,8 @@ await api.exportDoc("html");
 // Versions
 const versions = await api.listVersions();
 await api.restoreVersion(0);
-</div>
+</pre>
+    </details>
   </div>
 
   <div class="api-grid">
@@ -370,10 +344,11 @@ await api.restoreVersion(0);
           <tbody>
             <tr><td>constructor(baseUrl, docId?)</td><td>base URL, optional doc ID</td><td>—</td></tr>
             <tr><td>createDocument(title)</td><td>title string</td><td><code>POST /api/documents</code></td></tr>
+            <tr><td>newDocument(title)</td><td>Alias of createDocument</td><td><code>POST /api/documents</code></td></tr>
             <tr><td>loadDocument(id)</td><td>document id</td><td><code>GET /api/documents/{id}</code></td></tr>
             <tr><td>listDocuments()</td><td>—</td><td><code>GET /api/documents</code></td></tr>
             <tr><td>deleteDocument(id)</td><td>document id</td><td><code>DELETE /api/documents/{id}</code></td></tr>
-            <tr><td>save()</td><td>—</td><td><code>GET /api/documents/{id}/content</code></td></tr>
+            <tr><td>save()</td><td>Reads the current revision; writes already persist. Does not perform business write-back.</td><td><code>GET /api/documents/{id}/content</code></td></tr>
           </tbody>
         </table>
       </div>
@@ -408,10 +383,16 @@ await api.restoreVersion(0);
             <tr><td>italic(html)</td><td>HTML fragment</td><td>Wraps in <code>&lt;em&gt;</code></td></tr>
             <tr><td>underline(html)</td><td>HTML fragment</td><td>Wraps in <code>&lt;span style="text-decoration:underline"&gt;</code></td></tr>
             <tr><td>strikeThrough(html)</td><td>HTML fragment</td><td>Wraps in <code>&lt;s&gt;</code></td></tr>
+            <tr><td>subscript(html)</td><td>HTML fragment</td><td>Wraps in <code>&lt;sub&gt;</code></td></tr>
+            <tr><td>superscript(html)</td><td>HTML fragment</td><td>Wraps in <code>&lt;sup&gt;</code></td></tr>
+            <tr><td>fontName(font, html)</td><td>Font family, HTML</td><td>Sets font family</td></tr>
+            <tr><td>fontSize(size, html)</td><td>Font size, HTML</td><td>Sets font size</td></tr>
             <tr><td>foreColor(color, html)</td><td>CSS color, HTML</td><td>Sets foreground color</td></tr>
             <tr><td>hiliteColor(color, html)</td><td>CSS color, HTML</td><td>Sets background highlight</td></tr>
             <tr><td>justifyCenter(html)</td><td>HTML fragment</td><td>Wraps in <code>&lt;div style="text-align:center"&gt;</code></td></tr>
-            <tr><td>justifyLeft / justifyRight / justifyFull</td><td>HTML</td><td>Text alignment wrapper</td></tr>
+            <tr><td>justifyLeft(html)</td><td>HTML fragment</td><td>Left alignment wrapper</td></tr>
+            <tr><td>justifyRight(html)</td><td>HTML fragment</td><td>Right alignment wrapper</td></tr>
+            <tr><td>justifyFull(html)</td><td>HTML fragment</td><td>Justified alignment wrapper</td></tr>
             <tr><td>insertOrderedList(html)</td><td>newline-separated items</td><td>Wraps in <code>&lt;ol&gt;&lt;li&gt;</code></td></tr>
             <tr><td>insertUnorderedList(html)</td><td>newline-separated items</td><td>Wraps in <code>&lt;ul&gt;&lt;li&gt;</code></td></tr>
             <tr><td>formatBlock(tag, html)</td><td>tag name, HTML</td><td>Wraps in <code>&lt;tag&gt;</code></td></tr>
@@ -433,7 +414,10 @@ await api.restoreVersion(0);
             <tr><td>insertImage(src, opts)</td><td>generates <code>&lt;img&gt;</code> HTML, then calls <code>POST …/insert-html</code></td></tr>
             <tr><td>insertLink(href, text)</td><td>generates <code>&lt;a&gt;</code> HTML, then calls <code>POST …/insert-html</code></td></tr>
             <tr><td>insertTable(rows, cols)</td><td>generates table HTML, then calls <code>POST …/insert-html</code></td></tr>
-            <tr><td>insertPageBreak / insertHr / insertBlankPage / insertSymbol</td><td><code>POST …/insert-html</code> or <code>POST …/insert-text</code></td></tr>
+            <tr><td>insertPageBreak()</td><td><code>POST /api/documents/{id}/insert-html</code>; appends a page break</td></tr>
+            <tr><td>insertHr()</td><td><code>POST /api/documents/{id}/insert-html</code>; appends a horizontal rule</td></tr>
+            <tr><td>insertBlankPage()</td><td><code>POST /api/documents/{id}/insert-html</code>; appends blank-page markup</td></tr>
+            <tr><td>insertSymbol(ch)</td><td><code>POST /api/documents/{id}/insert-text</code>; appends the character as text</td></tr>
             <tr><td>getPageSetup()</td><td><code>GET /api/documents/{id}/page-setup</code></td></tr>
             <tr><td>setPageSetup(opts)</td><td><code>PUT /api/documents/{id}/page-setup</code></td></tr>
             <tr><td>setHeader(text, align)</td><td><code>PUT …/page-setup</code> (modifies chrome.header)</td></tr>
@@ -442,11 +426,30 @@ await api.restoreVersion(0);
             <tr><td>addComment(text, author?)</td><td><code>POST /api/documents/{id}/comments</code></td></tr>
             <tr><td>getComments()</td><td><code>GET /api/documents/{id}/comments</code></td></tr>
             <tr><td>setTrackChanges(on)</td><td><code>PUT /api/documents/{id}/track-changes</code></td></tr>
-            <tr><td>find(query, opts)</td><td>Server-side search in document text</td></tr>
-            <tr><td>replaceAll(query, replacement, opts)</td><td>Server-side search-and-replace in HTML</td></tr>
-            <tr><td>exportDoc(fmt)</td><td><code>GET /api/documents/{id}/export?fmt=xxx</code></td></tr>
+            <tr><td>find(query, opts)</td><td><code>GET /api/documents/{id}/content</code>, then searches locally in the client. Returns <code>{matches: [{index, text}]}</code>, up to 1000 matches.</td></tr>
+            <tr><td>replaceAll(query, replacement, opts)</td><td>Reads content, replaces locally in the HTML string, then calls <code>PUT /api/documents/{id}/content</code>. Returns <code>{replaced:true}</code>. May also affect HTML tags/attributes; literal matching is currently case-sensitive.</td></tr>
+            <tr><td>exportDoc(fmt)</td><td><code>GET /api/documents/{id}/export?fmt=docx|html|txt</code>. Downloads through the browser; REST PDF export is unsupported.</td></tr>
             <tr><td>listVersions()</td><td><code>GET /api/documents/{id}/versions</code></td></tr>
             <tr><td>restoreVersion(index)</td><td><code>POST /api/documents/{id}/restore</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sdk-panel">
+      <h2 data-i18n="apiDocs.h2.capabilities">Local helpers and unsupported operations</h2>
+      <div class="scroll">
+        <table class="cmds">
+          <thead><tr><th data-i18n="apiDocs.th.method">Method</th><th data-i18n="apiDocs.th.description">Description</th></tr></thead>
+          <tbody>
+            <tr><td>focus()</td><td>Returns {ok:true}; does not focus an editor or make an HTTP request.</td></tr>
+            <tr><td>setZoom(z)</td><td>Returns {ok:true, zoom:z}; does not persist zoom or change an editor.</td></tr>
+            <tr><td>getZoom()</td><td>Always returns {zoom:1}.</td></tr>
+            <tr><td>getChanges()</td><td>Always returns {changes:[]}; inspect getContent() HTML for revision marks.</td></tr>
+            <tr><td>format(cmd, value)</td><td>Rejects; use formatHtml(cmd, html, value) with an explicit HTML fragment.</td></tr>
+            <tr><td>acceptAllChanges()</td><td>Rejects; requires the embed SDK and browser editor DOM.</td></tr>
+            <tr><td>rejectAllChanges()</td><td>Rejects; requires the embed SDK and browser editor DOM.</td></tr>
+            <tr><td>previewPrint()</td><td>Rejects; REST does not support a print dialog or PDF export.</td></tr>
+            <tr><td>destroy()</td><td>Synchronously clears this client's document ID. Does not delete documents or save changes.</td></tr>
           </tbody>
         </table>
       </div>
@@ -470,17 +473,54 @@ The editor data directory is \`data/\`, each document stored as \`<id>.json\`.
 
 **Embed SDK** — see the **"SDK commands"** tab for the full postMessage-based SDK surface.
 
-**Server** — Node.js (no dependencies), runs on \`http://localhost:3001\`.
+**Server** — Node.js with jsdom for server-side DOCX parsing. Development URL: \`http://localhost:3001\`.
 `,
   },
-  servers: [{ url: "http://localhost:3001", description: "Development" }],
+  servers: [{ url: location.origin, description: "Current server" }],
   tags: [
+    { name: "Integration", description: "Business session bootstrap and formal save-back" },
     { name: "Documents", description: "CRUD for document metadata and content" },
     { name: "Docx", description: "Upload / download binary .docx files" },
     { name: "Versions", description: "Snapshot history and restore" },
     { name: "Health", description: "Server liveness" },
   ],
   paths: {
+    "/version": {
+      get: {
+        tags: ["Health"], summary: "Deployment version page", operationId: "version",
+        responses: { "200": { description: "HTML page with version from package.json", content: { "text/html": { schema: { type: "string" } } } } }
+      }
+    },
+    "/api/integrations/legalai/session": {
+      post: {
+        tags: ["Integration"], summary: "Open a business document and issue a scoped editor token", operationId: "createBusinessSession",
+        description: "Validates the business token by downloading the source document. Requires TOKEN_SECRET on the server. Legacy DOC/DOT requires LibreOffice.",
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["docId", "businessToken"], properties: {
+          docId: { type: "string" }, businessToken: { type: "string", format: "password" }, title: { type: "string" },
+          fileType: { type: "string", default: "docx" }, tenantId: { oneOf: [{ type: "string" }, { type: "number" }] }
+        } } } } },
+        responses: {
+          "200": { description: "Scoped token and document summary", content: { "application/json": { schema: { type: "object", properties: {
+            token: { type: "string" }, expiresAt: { type: "integer" }, document: { $ref: "#/components/schemas/DocumentSummary" }, reusedActiveSession: { type: "boolean" }
+          } } } } },
+          "400": { description: "Invalid document ID" }, "401": { description: "Missing or invalid business credential" },
+          "422": { description: "Document conversion or parsing failed" }, "501": { description: "Legacy converter unavailable" }, "503": { description: "TOKEN_SECRET is not configured" }
+        }
+      }
+    },
+    "/api/documents/{id}/commit": {
+      post: {
+        tags: ["Integration"], summary: "Write the latest DOCX back to the business system", operationId: "commitBusinessDocument",
+        security: [{ editorToken: [] }],
+        description: "Requires the scoped editor token. Uses the session business token unless overridden in X-LegalAI-Token or the request body. A close commit requests cleanup once the committed revision is current and the WebSocket room is empty.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }, { name: "X-LegalAI-Token", in: "header", schema: { type: "string" } }],
+        requestBody: { content: { "application/json": { schema: { type: "object", properties: { reason: { type: "string", default: "manual", example: "close" }, businessToken: { type: "string", format: "password" } } } } } },
+        responses: {
+          "200": { description: "Business write-back completed or skipped when unchanged", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, rev: { type: "integer" }, reason: { type: "string" }, skipped: { type: "string" }, legalAi: { type: "object" } } } } } },
+          "401": { description: "Missing or invalid credential" }, "404": { description: "Document not found" }, "409": { description: "Document is not business-bound or a commit is in progress" }, "500": { description: "DOCX generation or write-back failed" }
+        }
+      }
+    },
     "/api/health": {
       get: {
         tags: ["Health"],
@@ -513,7 +553,8 @@ The editor data directory is \`data/\`, each document stored as \`<id>.json\`.
     "/api/documents/import": {
       post: {
         tags: ["Documents"],
-        summary: "Import a .docx file (base64)",
+        summary: "Import a DOCX or legacy DOC/DOT file (base64)",
+        description: "DOCX is parsed natively. Legacy DOC/DOT requires LibreOffice installed on the server; unavailable conversion returns 501 and invalid content returns 422.",
         operationId: "importDocument",
         requestBody: { content: { "application/json": { schema: { type: "object", properties: { data: { type: "string", description: "base64-encoded .docx" }, name: { type: "string" } }, required: ["data"] } } } },
         responses: {
@@ -763,6 +804,7 @@ The editor data directory is \`data/\`, each document stored as \`<id>.json\`.
     }
   },
   components: {
+    securitySchemes: { editorToken: { type: "http", scheme: "bearer", description: "Scoped token from the business session endpoint; required for business-bound documents, optional for standalone documents." } },
     schemas: {
       DocumentSummary: {
         type: "object",
@@ -800,28 +842,27 @@ The editor data directory is \`data/\`, each document stored as \`<id>.json\`.
 };
 
 // ─── Swagger UI ───
-SwaggerUIBundle({
+for (const [path, operations] of Object.entries(spec.paths)) {
+  if (!path.includes('/api/documents/{id}')) continue;
+  for (const operation of Object.values(operations)) {
+    if (!operation.security) operation.security = [{}, { editorToken: [] }];
+  }
+}
+if (typeof SwaggerUIBundle === "function") SwaggerUIBundle({
   spec,
   dom_id: "#swagger-ui",
   deepLinking: true,
   presets: [SwaggerUIBundle.presets.apis],
   layout: "BaseLayout",
 });
-
-// ─── Tab switching ───
-function showTab(name) {
-  document.getElementById("sdk-panel").style.display = name === "sdk" ? "block" : "none";
-  document.getElementById("rest-panel").style.display  = name === "rest" ? "block" : "none";
-  document.getElementById("rest-client-panel").style.display = name === "restclient" ? "block" : "none";
-  document.querySelectorAll(".menu-bar .tabs a").forEach(a => a.classList.toggle("active", a.getAttribute("data-tab") === name));
+else {
+  const notice = document.createElement('p');
+  notice.dataset.i18n = 'apiDocs.swaggerUnavailable';
+  notice.textContent = 'Swagger UI could not load. SDK and REST client references are still available.';
+  document.getElementById('swagger-ui').append(notice);
 }
-window.showTab = showTab;
+
 </script>
-<script type="module">
-  import { applyI18n, t, getLocale, setLocale } from "/js/i18n.js";
-  applyI18n();
-  const langBtn = document.getElementById("btn-lang");
-  if (langBtn) langBtn.addEventListener("click", () => setLocale(getLocale() === "zh" ? "en" : "zh"));
-</script>
+<script type="module" src="/js/api-docs.js"></script>
 </body>
 </html>

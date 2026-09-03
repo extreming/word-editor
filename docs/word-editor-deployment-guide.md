@@ -1,151 +1,151 @@
-# word-editor 内网服务器部署指南
+# Docflow 第三方业务系统集成部署指南
 
-> 首次部署日期：2026-08-18
-> 文档更新日期：2026-08-24
-> 操作系统：Rocky Linux 8.10
-> 部署用户：`aiadmin`
-> 内网域名：`https://legaloffice.lenovo.com/`
-> 服务器地址：`10.195.6.81`
-> 应用端口：`127.0.0.1:3001`
+面向需要在自身页面中嵌入文档编辑器的第三方业务系统开发、部署和运维团队。目标是完成“打开业务文档 → 在线编辑 → 保存回业务系统 → 安全关闭”的完整流程。
 
-## 1. 部署结果
+## 1. 快速接入需要准备什么
 
-word-editor 已部署在公司内网服务器，并可通过以下地址从办公电脑访问：
+第三方业务系统需要完成三项工作：
 
-```text
-https://legaloffice.lenovo.com/
-```
+1. **后端提供文件接口**：同一路径支持 GET 下载原文和 POST 接收编辑后的 DOCX，见第 2 节。
+2. **部署编辑器服务**：配置业务接口地址、签名密钥、数据目录及 HTTPS/iframe 访问策略，见第 3、4 节。
+3. **前端嵌入 SDK**：取得业务访问凭证，传入文档 ID，处理就绪、保存和关闭，见第 5 节。
 
-当前访问链路为：
+业务系统继续负责用户身份、文档权限、正式文件存储及业务版本。Docflow 负责编辑、草稿、生成 DOCX 和调用业务文件接口，不要求业务系统更换已有数据库或对象存储。
 
 ```text
-用户浏览器
-  -> 内网 DNS：legaloffice.lenovo.com -> 10.195.6.81
-  -> Nginx：80/443
-  -> HTTPS 终止和反向代理
-  -> 127.0.0.1:3001
-  -> word-editor Docker 容器
+业务前端 ──获取文档访问凭证──> 业务后端
+   │
+   └── DocEditor.init() ──> 编辑器 iframe（独立 HTTPS 域名）
+                               │
+                               ├── 编辑器服务 ──GET 文件──> 业务后端 / 文件存储
+                               ├── 草稿保存、协作 ──> 编辑器服务 / 工作目录
+                               └── save()/close() ──POST DOCX──> 业务后端 / 文件存储
 ```
 
-word-editor 的 `3001` 端口只绑定服务器回环地址，不直接对内网开放；外部访问统一经过 Nginx。
+本文使用以下示例配置：
 
-## 2. 目录规划
+| 项目             | 示例值                                   | 由谁提供                     |
+| ---------------- | ---------------------------------------- | ---------------------------- |
+| 业务前端地址     | `https://app.example.com`                | 业务系统                     |
+| 编辑器外部地址   | `https://editor.example.com`             | 部署方，浏览器可访问         |
+| 业务后端基础地址 | `https://api.example.com`                | 业务系统，编辑器容器可访问   |
+| 文件接口路径     | `/integration/documents/{docId}/content` | 业务系统                     |
+| 文档 ID          | `tenant42_document1001`                  | 业务系统，映射到已有业务文档 |
 
-部署目录统一放在 `aiadmin` 用户目录下：
+部署采用单实例、独立域名根路径。当前前端使用 `/api/...`、`/js/...`、`/ws` 等绝对路径，不支持仅将 `baseUrl` 改为 `/editor` 就完成子路径部署。协作房间和业务会话保存在进程内，不能直接通过增加副本数实现高可用。
+
+## 2. 实现业务后端文件接口
+
+### 2.1 URL、文档 ID 与鉴权约定
+
+编辑器将下列配置拼接为下载和保存地址：
 
 ```text
-/home/aiadmin/word-editor/
-├── services/       # word-editor 源码、Dockerfile、docker-compose.yml
-└── data/           # 编辑器草稿、版本和生成 DOCX 等工作数据
+BUSINESS_API_BASE_URL + BUSINESS_DOCUMENT_CONTENT_PATH
 ```
 
-创建目录：
+例如 `https://api.example.com` 加 `/integration/documents/{docId}/content`。`{docId}` 会替换为编码后的文档 ID，GET 和 POST 使用同一地址。
 
-```bash
-mkdir -p /home/aiadmin/word-editor/services
-mkdir -p /home/aiadmin/word-editor/data
+文档 ID 仅支持 `A–Z`、`a–z`、`0–9`、下划线和连字符，长度为 1–128。**同一个编辑器实例内必须全局唯一**，并由业务后端映射到实际文件。当前文件存储和协作房间按 `docId` 区分.
+
+每次调用业务接口，编辑器都会按以下形式传递前端提供的 `businessToken`：
+
+```http
+X-Editor-Token: <businessToken>
 ```
 
-进入服务目录：
+`X-Editor-Token` 是本文的配置示例，对应 `BUSINESS_TOKEN_HEADER`。如果现有后端使用 `token`，可将配置改为 `token`；如果使用 `Authorization`，`businessToken` 必须包含完整的 `Bearer ...` 值，编辑器不会自动补此前缀。
 
-```bash
-cd /home/aiadmin/word-editor/services
+业务后端必须校验凭证对应的用户、租户、目标文档及操作权限：GET 检查读取权限，POST 检查写入权限。可以签发仅允许访问指定文档的业务凭证。
+
+### 2.2 GET：下载待编辑文件
+
+```http
+GET /integration/documents/tenant42_document1001/content
+X-Editor-Token: <businessToken>
+Accept: application/vnd.openxmlformats-officedocument.wordprocessingml.document
 ```
 
-回到当前用户主目录可以使用：
+成功响应必须是**文件二进制**：
 
-```bash
-cd ~
+```http
+HTTP/1.1 200 OK
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="document.docx"
+
+<DOCX binary>
 ```
 
-## 3. 通过 SFTP 上传源码
+不要返回 JSON 包装、base64 字符串、对象存储 URL 或登录页面。编辑器需要直接解析响应中的文件。无权限、文件不存在等情况应返回适当的非 2xx 状态。
 
-服务器无法正常通过 Git 下载源码，可能受到内网网络、代理或 GitHub 访问策略影响。因此本次没有在服务器执行 `git clone`，而是采用以下方式：
+当前业务文件下载上限为 64 MiB；还需按实际文档大小、转换时间和内存消耗设置业务服务及代理限制。
 
-1. 在可访问 GitHub 的电脑上获取 word-editor 源码；
-2. 在本地确认源码中包含运行所需文件；
-3. 通过 SFTP 将源码上传到：
+### 2.3 POST：保存编辑后的 DOCX
+
+```http
+POST /integration/documents/tenant42_document1001/content
+X-Editor-Token: <businessToken>
+X-Word-Editor-Save-Reason: manual
+Content-Type: multipart/form-data; boundary=...
+```
+
+| 项目       | 约定                                                                     |
+| ---------- | ------------------------------------------------------------------------ |
+| 文件字段名 | `file`                                                                   |
+| 文件类型   | DOCX 二进制，文件名以 `.docx` 结尾                                       |
+| 目标文档   | URL 中的 `docId`，由业务后端映射到业务文件                               |
+| 保存原因   | `X-Word-Editor-Save-Reason`，可为 `manual`、`close`、`timer`、`pagehide` |
+
+业务后端接收文件后，应完成文件落库/对象存储更新及所需的业务版本处理，再返回成功。建议成功响应为：
+
+```json
+{ "code": 0, "msg": "saved" }
+```
+
+编辑器接受 2xx 响应；JSON 包含 `code` 时，只有数值 `0` 或字符串 `"0"` 视为成功。`{"code":200}` 会被判为失败，只有 `{"success":false}` 而没有失败 HTTP 状态或非零 `code` 则不会被识别为失败。后端应统一响应语义，避免“接口成功、文件未保存”。
+
+业务后端应允许相同内容重试，避免重复保存造成非预期业务副作用。当前回写协议没有业务文件版本号或 ETag 前置条件；如果其他渠道也会修改同一文件，应由业务系统控制编辑锁或处理版本冲突。
+
+即使原文件是 DOC/DOT，编辑后回写的也是 DOCX；业务系统应同步更新扩展名、媒体类型和文件元数据。
+
+## 3. 部署编辑器服务
+
+获取我们提供的源码包，在服务器安装 Docker 和 Docker Compose 后即可部署。
+
+### 3.1 准备运行目录
+
+建议目录：
 
 ```text
-/home/aiadmin/word-editor/services
+/opt/docflow/
+├── services/                  # 本仓库代码及下方部署配置
+│   ├── dockflow.zip
+└── data/                      # 编辑器工作数据
 ```
 
-上传完成后检查目录：
+将交付的代码放入 `services`，创建可供容器写入的 `data` 目录。
 
-```bash
-cd /home/aiadmin/word-editor/services
-ls -lah
+### 3.2 配置环境变量
+
+在 `services/.env` 中填写本环境的值：
+
+```dotenv
+TOKEN_SECRET=replace-with-a-random-secret
+BUSINESS_API_BASE_URL=https://api.example.com
+BUSINESS_DOCUMENT_CONTENT_PATH=/integration/documents/{docId}/content
+BUSINESS_TOKEN_HEADER=X-Editor-Token
 ```
 
-至少需要确认应用入口和容器构建文件位于当前目录，例如：
-
-```text
-server.js
-public/
-Dockerfile
-docker-compose.yml
-```
-
-需要避免 SFTP 上传后多嵌套一层源码目录。例如，如果实际文件变成：
-
-```text
-/home/aiadmin/word-editor/services/word-editor-main/server.js
-```
-
-则 Compose 的构建上下文需要相应调整，或者将源码移动到预期的 `services` 目录。
-
-## 4. Docker Compose 配置
-
-### 4.1 固定 `TOKEN_SECRET` 和宿主业务系统地址
-
-`TOKEN_SECRET` 用于签名和验证 doc-editor 内部的短期文档令牌，它不是宿主业务系统的登录 Token。当前 Dev 部署根据项目要求将它和 `BUSINESS_API_BASE_URL` 直接写在 `docker-compose.yml` 中，不再依赖 `.env`。
-
-每个环境仍应使用不同的 32 字节随机密钥。需要轮换时可以生成新值，再替换 Compose 中的 `TOKEN_SECRET`：
+使用以下命令生成随机值，替换 `TOKEN_SECRET` 占位符；各环境分别生成并妥善保存：
 
 ```bash
 openssl rand -hex 32
+chmod 600 .env
 ```
 
-如果服务器没有 OpenSSL，也可以使用 Node.js：
+`TOKEN_SECRET` 只在编辑器服务端签发和验证短期文档令牌，不能作为业务用户凭证。`.env` 不应提交到代码仓库或随日志交付。生产环境也可由部署平台注入相同环境变量。
 
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-Compose 中的配置形式：
-
-```yaml
-TOKEN_SECRET: '替换为64位随机十六进制字符串'
-BUSINESS_API_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
-```
-
-注意：
-
-- 不要在工单、聊天或截图中发送 `TOKEN_SECRET`；
-- 密钥会进入 Compose 文件和代码历史，仓库访问权限必须受控；
-- 轮换 `TOKEN_SECRET` 会立即使已经签发的文档临时令牌失效，轮换后需要重新打开编辑器会话；
-- 复制到测试、生产环境或其他项目组时，必须同时替换密钥和 `BUSINESS_API_BASE_URL`；
-
-### 4.2 内网 CA 证书
-
-LegalAI 后端使用公司内网证书。Rocky Linux 宿主机已经维护了系统 CA Bundle，Compose 直接将以下宿主机文件只读挂载到容器：
-
-```text
-/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
-```
-
-部署前确认它是普通文件并包含证书：
-
-```bash
-sudo stat -c 'type=%F size=%s' /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
-sudo grep -m1 'BEGIN CERTIFICATE' /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
-```
-
-这是宿主机的受信任 CA 证书库，不是 Nginx 为 `legaloffice.lenovo.com` 配置的服务端证书或私钥。不要将 Nginx 私钥挂载给 word-editor。如果 LegalAI HTTPS 证书以后已被容器默认 CA 信任，可以从 Compose 中同时删除该挂载和 `NODE_EXTRA_CA_CERTS`。
-
-### 4.3 Compose 配置
-
-`/home/aiadmin/word-editor/services/docker-compose.yml` 使用以下核心配置：
+### 3.3 确认 Compose 文件
 
 ```yaml
 services:
@@ -153,569 +153,336 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: word-editor
-    container_name: word-editor
+    image: docflow-editor:local
     ports:
-      - '127.0.0.1:3001:3001'
+      - "127.0.0.1:3001:3001"
     volumes:
-      - /home/aiadmin/word-editor/data:/app/data:Z
-      - /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/etc/ssl/certs/host-ca-bundle.crt:ro
+      - ../data:/app/data
     environment:
-      HOST: '0.0.0.0'
-      PORT: '3001'
-      DATA_DIR: '/app/data'
-      NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/host-ca-bundle.crt'
-      TOKEN_SECRET: '替换为64位随机十六进制字符串'
-      BUSINESS_API_BASE_URL: 'https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai'
-      BUSINESS_DOCUMENT_CONTENT_PATH: '/doc-editor/{docId}/content'
-      BUSINESS_TOKEN_HEADER: 'token'
-      BUSINESS_REQUEST_TIMEOUT_MS: '30000'
-      BUSINESS_AUTO_COMMIT_ENABLED: 'false'
-      VERSION_HISTORY_ENABLED: 'true'
-      DATA_RETENTION_HOURS: '24'
-      DATA_CLEANUP_INTERVAL_MS: '86400000'
-      STARTUP_DRAFT_PURGE_ENABLED: 'true'
-      DISK_CHECK_INTERVAL_MS: '300000'
-      DISK_WARNING_PERCENT: '70'
-      DISK_CRITICAL_PERCENT: '85'
+      HOST: "0.0.0.0"
+      PORT: "3001"
+      DATA_DIR: "/app/data"
+      TOKEN_SECRET: "${TOKEN_SECRET:?Set TOKEN_SECRET in .env}"
+      BUSINESS_API_BASE_URL: "${BUSINESS_API_BASE_URL:?Set the business API URL}"
+      BUSINESS_DOCUMENT_CONTENT_PATH: "${BUSINESS_DOCUMENT_CONTENT_PATH:?Set the business content path}"
+      BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-X-Editor-Token}"
+      BUSINESS_REQUEST_TIMEOUT_MS: "30000"
+      BUSINESS_AUTO_COMMIT_ENABLED: "false"
+      VERSION_HISTORY_ENABLED: "false"
+      STARTUP_DRAFT_PURGE_ENABLED: "true"
+      DATA_RETENTION_HOURS: "24"
+      DATA_CLEANUP_INTERVAL_MS: "86400000"
+      DISK_CHECK_INTERVAL_MS: "300000"
+      DISK_WARNING_PERCENT: "70"
+      DISK_CRITICAL_PERCENT: "85"
     restart: unless-stopped
 ```
 
-说明：
+环境变量含义：
 
-- `127.0.0.1:3001:3001`：仅允许服务器本机访问应用端口，由 Nginx 对外代理；
-- `/home/aiadmin/word-editor/data:/app/data`：保存编辑器草稿、版本和生成的 DOCX；这些是编辑器工作数据，不是 LegalAI 正式业务文档的最终存储；
-- `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`：直接复用宿主机系统 CA 信任库，只读挂载，不属于 word-editor 发布文件；
-- `TOKEN_SECRET`、`BUSINESS_API_BASE_URL`：当前 Dev 部署直接固定在 Compose 中，不再依赖同目录 `.env`；复制到其他环境或其他项目组时必须替换为各自的独立密钥和后端地址；
-- `BUSINESS_AUTO_COMMIT_ENABLED=false`：自动保存仍写本地草稿，只有保存按钮、`Ctrl+S`、SDK `save()/close()` 等正式保存动作才回写宿主业务系统；
-- 旧版 `LEGALAI_*` 环境变量仍作为兼容别名保留；新旧变量同时存在时优先使用 `BUSINESS_*`；
-- `VERSION_HISTORY_ENABLED=true`：保留内部历史版本；如果某环境明确不需要历史功能，可以改为 `false`；
-- 历史开启时，每个文档最多保留 10 份且只保留最近 3 天；
-- 成功执行 SDK `close()` 且该文档 WebSocket 在线人数归零后，会立即删除草稿、当前 DOCX、原始 DOCX 和历史文件；
-- 其他非活动 LegalAI 工作数据按 `DATA_RETENTION_HOURS=24` 清理；未确认成功回写的草稿也至少保留 24 小时；
-- 服务启动时清除草稿正文和全部历史，保留最小生命周期元数据供审计及后续 DOCX 回收；
-- 每日清理和磁盘检查写入 `DATA_DIR/cleanup-audit.log`；数据盘使用率达到 70% 输出 warning，达到 85% 输出 critical；
-- `:Z`：为 SELinux 环境添加挂载标签兼容性；本机检查时 SELinux 为 `Disabled`，保留该参数不影响使用；
-- `restart: unless-stopped`：Docker 服务重启后自动恢复容器，除非容器被人工停止；
-- 文件底部不再声明未使用的顶级命名卷。
+| 参数                             | 含义                                                |
+| -------------------------------- | --------------------------------------------------- |
+| `HOST` / `PORT`                  | 容器内服务的监听地址与端口。                        |
+| `DATA_DIR`                       | 编辑器草稿、历史和生成文件的工作目录。              |
+| `TOKEN_SECRET`                   | 用于签发、验证短期文档令牌的服务端密钥。            |
+| `BUSINESS_API_BASE_URL`          | 业务后端的基础地址。                                |
+| `BUSINESS_DOCUMENT_CONTENT_PATH` | 业务文件下载和回写路径，`{docId}` 会替换为文档 ID。 |
+| `BUSINESS_TOKEN_HEADER`          | 调用业务文件接口时携带业务凭证的请求头名称。        |
+| `BUSINESS_REQUEST_TIMEOUT_MS`    | 编辑器请求业务文件接口的超时时间，单位为毫秒。      |
+| `BUSINESS_AUTO_COMMIT_ENABLED`   | 是否启用定时将草稿正式回写到业务系统。              |
+| `VERSION_HISTORY_ENABLED`        | 是否在编辑器工作目录中保留版本历史。                |
+| `STARTUP_DRAFT_PURGE_ENABLED`    | 是否在服务启动时清理草稿正文和历史数据。            |
+| `DATA_RETENTION_HOURS`           | 非活动工作数据的最长保留时间，单位为小时。          |
+| `DATA_CLEANUP_INTERVAL_MS`       | 执行过期工作数据清理的时间间隔，单位为毫秒。        |
+| `DISK_CHECK_INTERVAL_MS`         | 检查工作目录磁盘占用的时间间隔，单位为毫秒。        |
+| `DISK_WARNING_PERCENT`           | 磁盘占用达到该百分比时记录告警。                    |
+| `DISK_CRITICAL_PERCENT`          | 磁盘占用达到该百分比时记录严重告警。                |
 
-检查 Compose 展开后的最终配置：
+SELinux 启用的部署环境如需卷重标记，可按主机策略将数据挂载写为 `../data:/app/data:Z`。
 
-```bash
-cd /home/aiadmin/word-editor/services
-sudo docker compose config --quiet
-```
-
-`--quiet` 只检查配置，不把展开后的 `TOKEN_SECRET` 输出到终端。不要将普通 `docker compose config` 的完整输出粘贴到日志、工单或聊天中。
-
-容器启动后再通过第 6 节的 `docker inspect` 命令确认数据目录挂载，不需要为了查看挂载而输出包含密钥的完整 Compose 展开结果。
-
-## 5. 构建并启动 word-editor
-
-当前 `aiadmin` 用户没有直接访问 `/var/run/docker.sock` 的权限，直接执行 Docker 命令曾出现：
-
-```text
-permission denied while trying to connect to the Docker daemon socket
-```
-
-因此本次部署统一使用 `sudo docker ...`：
+启动并验证服务：
 
 ```bash
-cd /home/aiadmin/word-editor/services
-sudo docker compose up -d --build
-```
-
-查看容器：
-
-```bash
-sudo docker ps --filter name=word-editor
-```
-
-查看日志：
-
-```bash
-sudo docker compose logs --tail=100 word-editor
-```
-
-从服务器本机验证应用端口：
-
-```bash
-curl -v http://127.0.0.1:3001/
+cd /opt/docflow/services
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 word-editor
 curl -fsS http://127.0.0.1:3001/api/health
+curl -fsS http://127.0.0.1:3001/version
 ```
 
-`/api/health` 应返回包含 `"ok":true` 的 JSON，说明 Node 服务已正常启动。
+按主机权限需要使用 `sudo`。健康接口返回 `{"ok":true,...}` 说明进程可访问；`/version` 展示 `package.json` 中的版本号。
 
-## 6. 数据卷配置纠正过程
+### 3.4 可选：内网 CA 和旧版 Word 格式
 
-第一次启动时，Compose 使用了 Docker 命名卷。检查结果类似：
-
-```text
-volume /var/lib/docker/volumes/services_word-editor-data/_data -> /app/data
-```
-
-这与预期的宿主机目录 `/home/aiadmin/word-editor/data` 不一致。
-
-由于当时 `/app/data` 为空，可以安全停止容器、修改配置并重新创建：
-
-```bash
-cd /home/aiadmin/word-editor/services
-sudo docker compose down
-```
-
-将 Compose 挂载修正为：
+业务后端使用私有 CA 时，将其 CA 证书文件只读挂载到容器，并在 Compose 中设置：
 
 ```yaml
+# 合并到上述服务已有的 volumes、environment 中
 volumes:
-  - /home/aiadmin/word-editor/data:/app/data:Z
+  - ../data:/app/data
+  - /path/to/business-ca.pem:/etc/ssl/certs/business-ca.pem:ro
+environment:
+  NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/business-ca.pem"
 ```
 
-确认宿主机目录存在：
+这是对现有配置的补充，不是完整替换。挂载 CA 证书，不需要业务服务的私钥；不要通过关闭 TLS 校验解决证书错误。
 
-```bash
-mkdir -p /home/aiadmin/word-editor/data
-```
+**DOCX 原生支持；DOC/DOT 需要服务器安装 LibreOffice 后转换导入。** 当前 `Dockerfile` 未安装 LibreOffice。仅配置 `SOFFICE_PATH=/usr/bin/soffice` 不会安装转换器。确需支持旧格式时，在自有镜像构建中安装 LibreOffice，并在容器内用 `soffice --version` 验证后再提供此能力；缺少转换器时会返回 501。
 
-重新检查并启动：
+## 4. 配置 HTTPS、iframe 和 WebSocket
 
-```bash
-sudo docker compose config --quiet
-sudo docker compose up -d --build
-```
+浏览器需要访问 `https://editor.example.com`，编辑器容器需要访问 `BUSINESS_API_BASE_URL`。容器内的 `localhost` 指容器自身，不能直接用于访问宿主机上的业务后端。
 
-验证当前容器挂载：
-
-```bash
-sudo docker inspect word-editor \
-  --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
-```
-
-正确结果应类似：
-
-```text
-bind /home/aiadmin/word-editor/data -> /app/data
-```
-
-确认旧命名卷没有数据且不再被容器使用后，删除旧空卷：
-
-```bash
-sudo docker volume rm services_word-editor-data
-```
-
-验证旧卷已经删除：
-
-```bash
-sudo docker volume inspect services_word-editor-data
-```
-
-预期返回“no such volume”。如果旧卷中存在文件，不应直接删除，应先备份或迁移数据。
-
-## 7. 域名和网络检查
-
-内网域名解析结果：
-
-```text
-legaloffice.lenovo.com -> 10.195.6.81
-```
-
-Windows PowerShell 检查命令：
-
-```powershell
-Resolve-DnsName legaloffice.lenovo.com
-```
-
-部署 Nginx 前，服务器可以被 Ping 通，但 `443` 端口连接被拒绝。这说明 DNS 和基础网络正常，但服务器尚无 HTTPS 服务监听。
-
-服务器监听端口检查：
-
-```bash
-sudo ss -lntup
-```
-
-当时 word-editor 仅监听：
-
-```text
-127.0.0.1:3001
-```
-
-这是预期配置，不能直接从其他电脑访问 `3001`，需要通过 Nginx 的 `443` 端口访问。
-
-## 8. Nginx 和证书准备
-
-服务器没有通过系统软件包安装 Nginx，但已经存在一份编译后的 Nginx：
-
-```text
-/home/aiadmin/nginx-1.27.2
-```
-
-Nginx 可执行文件：
-
-```text
-/home/aiadmin/nginx-1.27.2/objs/nginx
-```
-
-该文件权限仅允许 root 执行，因此相关命令使用 `sudo`。
-
-检查编译参数：
-
-```bash
-sudo /home/aiadmin/nginx-1.27.2/objs/nginx -V 2>&1
-```
-
-HTTPS 配置要求输出中包含：
-
-```text
---with-http_ssl_module
-```
-
-### 8.1 证书
-
-已有的匹配证书和私钥位于：
-
-```text
-/home/aiadmin/only/tls.crt
-/home/aiadmin/only/tls.key
-```
-
-证书包含域名：
-
-```text
-DNS:legaloffice.lenovo.com
-```
-
-证书有效期截止时间：
-
-```text
-2026-10-24 08:48:39 GMT
-```
-
-新建 Nginx 专用证书目录，不直接引用临时目录：
-
-```bash
-sudo install -d \
-  -o root \
-  -g root \
-  -m 0755 \
-  /home/aiadmin/nginx-1.27.2/conf/certs
-```
-
-复制证书和私钥：
-
-```bash
-sudo install \
-  -o root -g root -m 0644 \
-  /home/aiadmin/only/tls.crt \
-  /home/aiadmin/nginx-1.27.2/conf/certs/legaloffice.crt
-
-sudo install \
-  -o root -g root -m 0600 \
-  /home/aiadmin/only/tls.key \
-  /home/aiadmin/nginx-1.27.2/conf/certs/legaloffice.key
-```
-
-私钥不能设置为 `644`、`666` 或 `777`，也不能输出或发送私钥内容。
-
-### 8.2 验证证书和私钥匹配
-
-分别计算公钥摘要：
-
-```bash
-sudo openssl x509 \
-  -in /home/aiadmin/nginx-1.27.2/conf/certs/legaloffice.crt \
-  -pubkey -noout |
-openssl pkey -pubin -outform DER |
-sha256sum
-```
-
-```bash
-sudo openssl pkey \
-  -in /home/aiadmin/nginx-1.27.2/conf/certs/legaloffice.key \
-  -pubout -outform DER |
-sha256sum
-```
-
-两个 SHA256 必须完全相同。
-
-曾经直接以 `aiadmin` 读取证书时发生 `Permission denied`，管道后续计算出了：
-
-```text
-e3b0c44298fc1c149afbf4c8996fb924...
-```
-
-这是空输入的 SHA256，并不是有效的证书摘要。重新使用 `sudo openssl x509 ...` 后再比较结果。
-
-`/home/aiadmin/tmp/tls.crt` 和 `/home/aiadmin/tmp/private.key` 的摘要不同，因此本次未使用 `tmp` 目录中的私钥。
-
-## 9. Nginx 完整配置
-
-配置文件：
-
-```text
-/home/aiadmin/nginx-1.27.2/conf/nginx.conf
-```
-
-部署前备份原配置：
-
-```bash
-sudo cp -a \
-  /home/aiadmin/nginx-1.27.2/conf/nginx.conf \
-  /home/aiadmin/nginx-1.27.2/conf/nginx.conf.bak-20260818
-```
-
-当前配置内容：
+以下为 Nginx 的 `http` 上下文配置片段，适用于 Nginx 与编辑器容器运行在同一宿主机。替换域名和证书路径；Nginx 在其他机器或容器内时，应改用可达的上游地址。
 
 ```nginx
-worker_processes auto;
-
-error_log logs/error.log;
-pid       logs/nginx.pid;
-
-events {
-    worker_connections 1024;
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
 }
 
-http {
-    include       mime.types;
-    default_type  application/octet-stream;
+server {
+    listen 80;
+    server_name editor.example.com;
+    return 301 https://$host$request_uri;
+}
 
-    sendfile on;
-    keepalive_timeout 65;
+server {
+    listen 443 ssl;
+    server_name editor.example.com;
+    ssl_certificate     /etc/nginx/certs/editor.fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/editor.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 64m;
 
-    map $http_upgrade $connection_upgrade {
-        default upgrade;
-        ''      close;
-    }
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_buffering off;
 
-    server {
-        listen 80;
-        server_name legaloffice.lenovo.com;
-
-        return 301 https://$host$request_uri;
-    }
-
-    server {
-        listen 443 ssl;
-        server_name legaloffice.lenovo.com;
-
-        ssl_certificate     /home/aiadmin/nginx-1.27.2/conf/certs/legaloffice.crt;
-        ssl_certificate_key /home/aiadmin/nginx-1.27.2/conf/certs/legaloffice.key;
-
-        ssl_protocols TLSv1.2 TLSv1.3;
-        ssl_session_cache shared:SSL:10m;
-        ssl_session_timeout 10m;
-
-        client_max_body_size 100m;
-
-        location / {
-            proxy_pass http://127.0.0.1:3001;
-            proxy_http_version 1.1;
-
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection $connection_upgrade;
-
-            proxy_connect_timeout 30s;
-            proxy_read_timeout 300s;
-            proxy_send_timeout 300s;
-
-            proxy_buffering off;
-        }
+        # 应用默认 SAMEORIGIN；跨域嵌入时替换为明确的业务页面白名单。
+        proxy_hide_header X-Frame-Options;
+        add_header Content-Security-Policy "frame-ancestors 'self' https://app.example.com" always;
     }
 }
 ```
 
-## 10. Nginx 日志目录问题
-
-第一次执行配置检查时出现：
-
-```text
-could not open error log file: .../logs/error.log: No such file or directory
-open() ".../logs/nginx.pid" failed: No such file or directory
-```
-
-配置语法本身已经显示 `syntax is ok`，失败原因是编译目录中缺少运行时 `logs` 目录。
-
-创建目录：
+检查并重载：
 
 ```bash
-sudo install -d \
-  -o root \
-  -g root \
-  -m 0755 \
-  /home/aiadmin/nginx-1.27.2/logs
+nginx -t
+nginx -s reload
+curl -fsSI https://editor.example.com/
+curl -fsS https://editor.example.com/api/health
 ```
 
-即使原始默认配置注释了 `error_log` 和 `pid`，Nginx 仍可能使用编译时默认的相对路径，因此该目录仍然需要存在。
+需确认最终响应允许业务页面嵌入，其他网关没有再次添加冲突的 `X-Frame-Options: SAMEORIGIN`。业务页面自身如有 CSP，需在 `frame-src` 中允许编辑器来源，在 `script-src` 中允许 SDK 来源；内联脚本示例应按业务系统的 CSP 改为外部脚本或使用 nonce。
 
-## 11. 检查并启动 Nginx
+SDK 模式由 iframe 在编辑器自身来源下调用 REST/WebSocket，业务页面通过 `postMessage` 操作编辑器，通常不需要跨域 REST CORS。业务浏览器直接跨域调用编辑器 REST 是另一种调用方式，当前应用未提供通用 CORS 配置。
 
-检查配置：
+`frame-ancestors` 仅控制谁可以嵌入页面，不承担 API 鉴权。当前服务仍保留匿名的独立文档接口，不能把“设置了 TOKEN_SECRET”视为整个服务已受保护。部署方应通过业务网关或网络访问策略限定可访问者及所需路由，并保留 SDK 必需的会话、当前文档接口和 `/ws`；不要把实例直接作为开放的公共文档存储服务。
+
+## 5. 业务前端嵌入 SDK
+
+### 5.1 由业务后端返回打开参数
+
+业务前端先调用自身后端取得以下数据。下面的 `/api/editor-launch` **是第三方自行实现的示例接口，不是编辑器内置接口**。
+
+```json
+{
+  "baseUrl": "https://editor.example.com",
+  "docId": "tenant42_document1001",
+  "documentTitle": "示例文档",
+  "fileType": "docx",
+  "tenantId": "tenant42",
+  "businessToken": "document-scoped-business-credential",
+  "user": "张三"
+}
+```
+
+后端应先验证当前业务用户能否打开目标文档，再返回固定、受信任的编辑器地址及凭证。`businessToken` 是第 2 节业务文件接口接受的凭证，不是编辑器签发的短期令牌。
+
+业务凭证有效期应覆盖编辑会话。iframe 会在编辑器令牌到期前尝试刷新，但仍使用最初传入的业务凭证，不会自动刷新业务系统登录态；凭证失效后需由业务系统重新取得凭证并安排重新打开。
+
+### 5.2 最小页面示例
+
+下面示例假设页面位于业务系统域名下，`/api/editor-launch` 通过当前业务登录会话鉴权。根据业务系统约定调整该请求，并将关闭动作接入弹窗关闭或路由离开流程。
+
+```html
+<div id="editor-holder" style="height:80vh;min-height:500px"></div>
+<p id="editor-status" role="status">正在打开文档…</p>
+<button id="save-editor" disabled>保存</button>
+<button id="close-editor" disabled>保存并关闭</button>
+<script src="https://editor.example.com/js/sdk.js"></script>
+<script type="module">
+  const status = document.getElementById("editor-status");
+  const saveButton = document.getElementById("save-editor");
+  const closeButton = document.getElementById("close-editor");
+  let editor;
+  let ready = false;
+  let busy = false;
+
+  function updateButtons() {
+    saveButton.disabled = closeButton.disabled = !ready || busy;
+  }
+
+  async function openEditor() {
+    const response = await fetch("/api/editor-launch?documentId=1001", {
+      credentials: "same-origin",
+    });
+    if (!response.ok) throw new Error("无法取得文档打开参数");
+    const launch = await response.json();
+    editor = DocEditor.init({
+      container: "#editor-holder",
+      baseUrl: launch.baseUrl,
+      docId: launch.docId,
+      documentTitle: launch.documentTitle,
+      fileType: launch.fileType,
+      tenantId: launch.tenantId,
+      businessToken: launch.businessToken,
+      user: launch.user,
+      locale: "zh",
+      mode: "edit",
+      history: true,
+      onReady(info) {
+        ready = true;
+        status.textContent = `已打开：${info.title}`;
+        updateButtons();
+      },
+      onChange() {
+        status.textContent = "有修改，请保存到业务系统";
+      },
+      onSave(info) {
+        status.textContent =
+          info.result?.skipped === "not-legalai"
+            ? "仅保存了编辑器草稿，请检查业务会话配置"
+            : "已保存到业务系统";
+      },
+      onError(error) {
+        status.textContent = error.message || "编辑器发生错误";
+      },
+    });
+  }
+
+  async function saveEditor(closeAfterSave) {
+    if (!ready || busy) return;
+    busy = true;
+    updateButtons();
+    try {
+      const result = closeAfterSave
+        ? await editor.close()
+        : await editor.save();
+      if (result.result?.skipped === "not-legalai") {
+        throw new Error("未建立业务文档会话，尚未回写业务文件");
+      }
+      if (closeAfterSave) {
+        editor.destroy();
+        ready = false;
+        status.textContent = "已保存并关闭";
+        // 在这里关闭业务弹窗或离开当前业务页面。
+      }
+    } catch (error) {
+      status.textContent = `保存失败，编辑器仍保留：${error.message}`;
+    } finally {
+      busy = false;
+      updateButtons();
+    }
+  }
+
+  saveButton.addEventListener("click", () => saveEditor(false));
+  closeButton.addEventListener("click", () => saveEditor(true));
+  openEditor().catch((error) => {
+    status.textContent = error.message;
+  });
+</script>
+```
+
+`DocEditor.init()` 同步返回实例，文档尚在加载，必须等 `onReady` 后再调用内容操作。多数 SDK 命令超时为 15 秒，`save()` 和 `close()` 为 60 秒；网络超时后应核对业务保存结果再重试。
+
+`mode: 'view'` 仅控制编辑器 UI，不是服务端只读授权；业务接口仍须校验权限。`history: false` 仅隐藏历史入口，服务端是否记录历史由 `VERSION_HISTORY_ENABLED` 决定。
+
+### 5.3 SDK 自动完成的会话流程
+
+传入 `docId` 和 `businessToken` 后，无需业务前端自行下载文件或预先导入：
+
+1. SDK 创建 iframe，并将业务凭证放入 URL fragment；编辑器读取后清除 fragment。
+2. iframe 调用编辑器的 `POST /api/integrations/legalai/session`。
+3. 编辑器服务使用业务凭证调用第 2 节 GET，解析 DOCX，创建或复用该文档的编辑会话。
+4. 编辑器签发有效期为 1 小时的文档令牌，iframe 自动用于当前文档 REST 请求和 WebSocket；临近过期自动尝试续期。
+5. `save()` / `close()` 先保存草稿，再调用 `POST /api/documents/{id}/commit`，由编辑器服务向业务后端 POST DOCX。
+
+当前路由中的 `legalai`、`X-LegalAI-Token`、回调中的 `skipped: "not-legalai"` 是现有协议名称。第三方使用 `BUSINESS_*` 即可接入，不需要运行同名业务系统，也不要自行改写这些内置路由。当前版本没有供本流程使用的 `/api/auth/token` 或 `SAVE_WEBHOOK_URL` 配置入口；正式回写使用上述固定 GET/POST 文件协议。
+
+## 6. 明确保存与关闭的语义
+
+| 操作                       | 实际行为                               | 业务系统如何处理                 |
+| -------------------------- | -------------------------------------- | -------------------------------- |
+| 输入时自动保存             | 保存编辑器工作草稿                     | 不显示为“正式文件已更新”         |
+| `onChange`                 | 文档变动通知                           | 用于提示待保存                   |
+| 保存按钮、Ctrl+S、`save()` | 刷新草稿后正式回写业务 DOCX            | 等待成功结果；失败允许重试       |
+| `close()`                  | 以 `close` 原因正式保存，不移除 iframe | 成功后再关闭页面/弹窗            |
+| `destroy()`                | 移除 iframe 和监听，不保存             | 必须放在保存成功之后             |
+| `onSave`                   | 正式保存流程完成的事件，包含 `result`  | 在有效业务会话中确认业务保存结果 |
+| 下载/导出文件              | 向用户提供文件                         | 不等同于更新业务系统原文件       |
+
+默认 `BUSINESS_AUTO_COMMIT_ENABLED=false`。如启用定时正式保存，可设置 `BUSINESS_AUTO_COMMIT_INTERVAL_MS`，默认 300000 毫秒，最小 60000 毫秒；这会增加业务文件写入频率，并依赖仍然有效的业务会话凭证。
+
+浏览器刷新、关页和 `pagehide` 无法保证异步保存完成。业务弹窗关闭、路由切换应统一等待 `close()`，失败时保留编辑器并提示用户；不能先卸载组件再等待保存。`onCommentDelete({id})` 只表示本地删除批注并安排保存，不代表业务文件已更新。
+
+## 7. 工作数据、运维与能力边界
+
+- **正式存储**：业务系统是正式文件来源和最终存储；`/app/data` 存放编辑器草稿、版本及生成文件，不应当作业务文档永久库。
+- **关闭清理**：成功执行 `close()`，且关闭提交版本、当前版本和已提交版本一致、该文档 WebSocket 房间无人在线后，工作数据可立即清除。下一次打开重新读取业务文件。
+- **到期清理**：非活动业务文档按 `DATA_RETENTION_HOURS` 清理，超过保留期的未确认回写草稿也可能被清除；不是“未保存就永不清理”。
+- **启动清理**：代码默认 `STARTUP_DRAFT_PURGE_ENABLED=true` 会清除草稿正文、批注、页面设置及历史，保留最小元数据。本文示例设为 `false`，但重新建立无活动房间的业务会话仍会从业务文件初始化，不能把草稿当作自动恢复承诺。
+- **历史版本**：开启时最多保留 10 份、最近 3 天；关闭清理也会删除历史。业务系统需自行保留正式业务版本。
+- **审计和磁盘**：清理与磁盘告警记录在 `DATA_DIR/cleanup-audit.log`，本文配置在 70%/85% 使用率分别告警。
+- **格式范围**：本指南的业务回写流程针对 Word 文档，输出 DOCX。PDF 查看/批注和浏览器导出不代表支持 PDF 业务文件回写；复杂 DOCX 应用业务样本验证格式保留。
+
+更新代码后使用构建命令发布，单纯重启旧镜像不会包含新代码：
 
 ```bash
-sudo /home/aiadmin/nginx-1.27.2/objs/nginx \
-  -p /home/aiadmin/nginx-1.27.2/ \
-  -c conf/nginx.conf \
-  -t
+cd /opt/docflow/services
+docker compose up -d --build
+docker compose logs --tail=100 word-editor
 ```
 
-预期结果：
+更新前安排正在编辑的用户完成正式保存，保留可回退的镜像及业务正式文档版本。工作目录持久挂载不能阻止应用自己的清理策略；不要在运维脚本中无条件删除数据目录。业务地址及密钥变更也需重新创建容器；轮换 `TOKEN_SECRET` 会使旧文档令牌失效，应安排重新打开。
 
-```text
-syntax is ok
-test is successful
-```
+## 8. 集成验收与故障定位
 
-启动 Nginx：
+用第三方真实流程完成以下验收后，再将编辑入口提供给用户：
 
-```bash
-sudo /home/aiadmin/nginx-1.27.2/objs/nginx \
-  -p /home/aiadmin/nginx-1.27.2/ \
-  -c conf/nginx.conf
-```
+1. 业务页面可嵌入编辑器，容器健康正常，浏览器 `/ws` 连接成功。
+2. 合法业务用户能打开指定 DOCX；错误凭证、其他租户文档和无写权限操作被业务后端拒绝。
+3. 输入文字、添加批注后调用 `save()`，确认业务后端收到 `file` 字段，并从业务存储重新下载核对内容。
+4. 调用 `close()` 成功后再 `destroy()`，重新打开同一业务文档，内容与正式保存结果一致。
+5. 模拟业务保存失败或凭证过期，页面明确显示失败且未自动销毁编辑器。
+6. 按部署选定的策略验证重启、关闭清理、草稿到期及历史版本；复杂表格、页眉页脚、浮动对象用样本文档核对。
 
-检查监听端口：
+| 现象                          | 优先检查                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------ |
+| iframe 空白、refused to frame | 编辑器响应的 X-Frame-Options/CSP、业务页面 frame-src、HTTPS 和容器高度         |
+| 503 会话失败                  | TOKEN_SECRET、BUSINESS_API_BASE_URL 是否已配置并生效                           |
+| 打开或保存 401                | 业务凭证、配置的请求头名称、用户文档权限、令牌有效期                           |
+| 502 下载/回写失败             | 容器到业务接口的网络、DNS、CA、超时和业务响应；GET 是否返回了 JSON/登录页      |
+| 501 导入失败                  | 容器未安装 LibreOffice，或 SOFFICE_PATH 指向不存在的程序                       |
+| 422 文档解析失败              | 文件类型、文件损坏、加密文档及旧格式转换结果                                   |
+| HTTP 200 但提示保存失败       | JSON 的 code 是否为 0；业务接口不要使用 code:200 表示成功                      |
+| 草稿有内容但业务文件没变      | 是否只触发了自动草稿保存；是否传入 docId + businessToken；是否等待正式保存完成 |
+| SDK 超时、协作断开            | onReady 是否已触发、代理 WebSocket 升级头、网络和业务保存耗时                  |
+| 保存冲突 409                  | 草稿版本冲突或另一个正式保存进行中；先核对最新状态，再重试                     |
+| 子路径部署导致资源 404        | 改用独立域名根路径，或单独完成应用子路径适配                                   |
 
-```bash
-sudo ss -lntp | grep -E ':(80|443)\b'
-```
-
-配置修改后，先执行 `-t`，通过后再平滑重载：
-
-```bash
-sudo /home/aiadmin/nginx-1.27.2/objs/nginx \
-  -p /home/aiadmin/nginx-1.27.2/ \
-  -c conf/nginx.conf \
-  -s reload
-```
-
-## 12. 最终验证
-
-服务器本机验证 HTTP 跳转：
-
-```bash
-curl -I http://legaloffice.lenovo.com
-```
-
-预期返回 `301`，并跳转到 HTTPS。
-
-验证 HTTPS 和反向代理：
-
-```bash
-curl -vk https://legaloffice.lenovo.com/
-```
-
-办公电脑 PowerShell 验证端口：
-
-```powershell
-Test-NetConnection legaloffice.lenovo.com -Port 443
-```
-
-预期结果：
-
-```text
-TcpTestSucceeded : True
-```
-
-最后通过浏览器访问：
-
-```text
-https://legaloffice.lenovo.com/
-```
-
-本次已确认浏览器可以正常打开 word-editor 页面。
-
-## 13. 常用运维命令
-
-### 13.1 word-editor
-
-```bash
-cd /home/aiadmin/word-editor/services
-
-# 查看状态
-sudo docker compose ps
-
-# 查看日志
-sudo docker compose logs -f --tail=100 word-editor
-
-# 重新构建并启动
-sudo docker compose up -d --build
-
-# 重启
-sudo docker compose restart word-editor
-
-# 停止并移除容器和 Compose 网络，不删除 bind mount 数据
-sudo docker compose down
-```
-
-不要随意执行 `docker compose down -v` 或删除 `/home/aiadmin/word-editor/data`。
-
-### 13.2 Nginx
-
-```bash
-# 配置检查
-sudo /home/aiadmin/nginx-1.27.2/objs/nginx \
-  -p /home/aiadmin/nginx-1.27.2/ \
-  -c conf/nginx.conf \
-  -t
-
-# 平滑重载
-sudo /home/aiadmin/nginx-1.27.2/objs/nginx \
-  -p /home/aiadmin/nginx-1.27.2/ \
-  -c conf/nginx.conf \
-  -s reload
-
-# 查看错误日志
-sudo tail -n 100 /home/aiadmin/nginx-1.27.2/logs/error.log
-```
-
-## 14. 后续待办
-
-1. 为自编译 Nginx 创建 `systemd` 服务。本次 Nginx 是手工启动，服务器重启后不一定自动恢复；
-2. 在 2026-10-24 前更新 `legaloffice.lenovo.com` 证书，并提前安排续期；
-3. 定期备份 `/home/aiadmin/word-editor/data`，并实际验证恢复流程；
-4. 增加容器、磁盘、Nginx、HTTP 健康检查和证书到期监控；
-5. 限制测试服务的访问范围和编辑器文档权限；
-6. 使用真实脱敏法律文档验证 DOCX 导入、编辑、保存、导出和重启后的数据持久化；
-7. 在完成鉴权、租户隔离、LegalAI 正式回写和格式兼容性验证前，不替换现有 FileZ 生产链路；
-8. 定期轮换 `TOKEN_SECRET`，轮换后验证重新打开合同、自动保存草稿和正式保存均正常。
-
-## 15. 故障排查顺序
-
-浏览器无法访问时，建议依次检查：
-
-```text
-1. Resolve-DnsName 是否仍解析到 10.195.6.81
-2. Test-NetConnection 的 443 是否成功
-3. Nginx 是否监听 80/443
-4. Nginx 配置检查是否通过
-5. Nginx error.log 是否有错误
-6. curl http://127.0.0.1:3001/api/health 是否返回 `{"ok":true}`
-7. word-editor 容器是否运行
-8. docker compose logs 是否有应用错误
-9. 容器挂载是否仍指向 /home/aiadmin/word-editor/data
-```
-
-对应命令：
-
-```bash
-sudo ss -lntp | grep -E ':(80|443|3001)\b'
-
-sudo /home/aiadmin/nginx-1.27.2/objs/nginx \
-  -p /home/aiadmin/nginx-1.27.2/ \
-  -c conf/nginx.conf \
-  -t
-
-sudo tail -n 100 /home/aiadmin/nginx-1.27.2/logs/error.log
-curl -fsS http://127.0.0.1:3001/api/health
-
-cd /home/aiadmin/word-editor/services
-sudo docker compose ps
-sudo docker compose logs --tail=100 word-editor
-
-sudo docker inspect word-editor \
-  --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
-```
+完整 SDK 方法见 [JS SDK 集成方法说明](JS%20SDK集成方法说明.md)；产品功能见 [docflow 产品手册](Docflow产品手册.md)。部署后可访问 `/api-docs.html#sdk` 查看 SDK 参考。
