@@ -669,13 +669,29 @@ body.table-resizing, body.table-resizing * { cursor: var(--table-resize-cursor) 
 .comment-text { white-space: pre-wrap; }
 .comment-orphan { color: #b02a2a; font-size: 11px; margin-top: 4px; font-style: italic; }
 .comment-reply { margin-top: 6px; padding: 6px 8px; background: #f6f7f9; border-radius: 6px; }
-.comment-reply-input { width: 100%; margin-top: 6px; padding: 5px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; }
+.comment-reply-editor {
+  display: grid; grid-template-columns: max-content max-content minmax(0, 1fr);
+  gap: 8px; margin-top: 10px;
+}
+.comment-reply-input {
+  grid-column: 1 / -1; width: 100%; min-width: 0; padding: 7px 9px;
+  font: inherit; color: var(--ink); background: #fff;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.comment-reply-input:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(43, 87, 154, 0.12);
+}
 .comment-actions { display: flex; gap: 6px; margin-top: 8px; }
-.comment-actions button, .review-actions button {
+.comment-actions button, .review-actions button, .comment-reply-editor button {
   font-size: 11px; padding: 3px 10px; border: 1px solid var(--border);
   background: #fff; border-radius: 5px; cursor: pointer;
 }
 .comment-actions button:hover, .review-actions button:hover { background: #eef1f6; }
+.comment-reply-editor button { min-height: 28px; padding: 5px 10px; font-family: inherit; line-height: 1.2; }
+.comment-reply-editor button:hover { background: #eef1f6; }
+.comment-reply-editor button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.comment-reply-editor button[type="submit"]:hover { background: #21477f; border-color: #21477f; }
+.comment-reply-editor button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .review-toggle { display: flex; gap: 6px; align-items: center; font-size: 13px; margin-bottom: 8px; cursor: pointer; }
 .review-actions { display: flex; gap: 6px; margin-bottom: 10px; }
