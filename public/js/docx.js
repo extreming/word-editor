@@ -11,6 +11,8 @@
 // Export: the same set, generating a complete valid OOXML package.
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const W14 = "http://schemas.microsoft.com/office/word/2010/wordml";
+const W15 = "http://schemas.microsoft.com/office/word/2012/wordml";
 const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture";
@@ -380,8 +382,31 @@ function parseComments(files) {
     if (id == null) continue;
     const author = c.getAttributeNS(W, "author") ?? c.getAttribute("w:author") ?? "";
     const date = c.getAttributeNS(W, "date") ?? c.getAttribute("w:date") ?? "";
-    const paras = children(c, W, "p").map((p) => p.textContent);
-    map.set(id, { author, date, text: paras.join("\n").trim() });
+    const paragraphs = children(c, W, "p");
+    const paras = paragraphs.map((p) => p.textContent);
+    const paraId = paragraphs.at(-1)?.getAttributeNS(W14, "paraId");
+    map.set(id, { author, date, text: paras.join("\n").trim(), paraId, replies: [] });
+  }
+  const extended = decodePart(files, "word/commentsExtended.xml");
+  if (extended) {
+    const byPara = new Map([...map.values()].filter(c => c.paraId).map(c => [c.paraId, c]));
+    try {
+      for (const ex of parseXml(extended).getElementsByTagNameNS(W15, "commentEx")) {
+        const c = byPara.get(ex.getAttributeNS(W15, "paraId"));
+        if (!c) continue;
+        c.parent = byPara.get(ex.getAttributeNS(W15, "paraIdParent"));
+        c.resolved = /^(1|true|on)$/.test(ex.getAttributeNS(W15, "done"));
+      }
+      for (const c of map.values()) {
+        let root = c;
+        const seen = new Set([c]);
+        while (root.parent && !seen.has(root.parent)) { root = root.parent; seen.add(root); }
+        if (root !== c && !root.parent) {
+          root.replies.push({ author: c.author, text: c.text, createdAt: Date.parse(c.date) || Date.now() });
+          c.isReply = true;
+        }
+      }
+    } catch { /* Retain ordinary comments if the optional extension is malformed. */ }
   }
   return map;
 }
@@ -939,6 +964,9 @@ function tableToHtml(tbl, ctx) {
   let merges = new Map(); // gridCol -> model cell spanning from the previous row
   for (const tr of children(tbl, W, "tr")) {
     const row = [];
+    const trPr = child(tr, W, 'trPr');
+    const height = trPr && child(trPr, W, 'trHeight');
+    row.height = height ? Number(attr(height, 'val')) / TW_PER_PX : 0;
     const nextMerges = new Map();
     let gridCol = 0;
     for (const tc of children(tr, W, "tc")) {
@@ -989,9 +1017,12 @@ function tableToHtml(tbl, ctx) {
     // otherwise a completed merge can leak into a later, unrelated row.
     merges = nextMerges;
   }
-  let html = '<table><tbody>';
+  const tblPr = child(tbl, W, 'tblPr');
+  const tblW = tblPr && child(tblPr, W, 'tblW');
+  const width = tblW && attr(tblW, 'type') === 'dxa' ? Number(attr(tblW, 'w')) / TW_PER_PX : 0;
+  let html = `<table${width > 0 ? ` style="width:${width}px;table-layout:fixed"` : ''}><tbody>`;
   for (const row of rows) {
-    html += "<tr>";
+    html += row.height > 0 ? `<tr style="height:${row.height}px">` : "<tr>";
     for (const c of row) {
       const attrs = [];
       if (c.colspan > 1) attrs.push(`colspan="${c.colspan}"`);
@@ -1027,6 +1058,7 @@ function renderParagraph(p, ctx) {
     ? ' class="ooxml-anchor-container"' : "";
   let html = "";
   if (info.pageBreakBefore || inner.pageBreak) html += `<p class="page-break"><br></p>`;
+  if (inner.pageBreak && !inner.html) return html;
   html += `<${info.tag}${anchorClass}${attrStr}>${inner.html || "<br>"}</${info.tag}>`;
   return html;
 }
@@ -1308,13 +1340,13 @@ export async function importDocx(fileOrBuffer) {
   }
 
   // comments -> the editor's client-side format
-  const comments = [...ctx.comments.entries()].map(([id, c]) => ({
+  const comments = [...ctx.comments.entries()].filter(([, c]) => !c.isReply).map(([id, c]) => ({
     id: "c" + id,
     author: c.author || "Unknown",
     text: c.text || "",
     createdAt: c.date ? (Date.parse(c.date) || Date.now()) : Date.now(),
-    resolved: false,
-    replies: [],
+    resolved: !!c.resolved,
+    replies: c.replies || [],
   }));
 
   return { html, pageSetup: pageSetup || { ...DEFAULT_PAGE_SETUP }, title, comments };
@@ -1691,22 +1723,44 @@ function tableToXml(tableEl, ctx) {
     nCols = Math.max(nCols, grid[r].length);
   });
   if (!nCols) return "";
-  const colW = Math.floor(9360 / nCols);
-  let xml = `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/>` +
+  const setup = ctx.pageSetup || DEFAULT_PAGE_SETUP;
+  const paper = PAGE_SIZES[setup.size] || PAGE_SIZES.Letter;
+  const margins = setup.margins || DEFAULT_PAGE_SETUP.margins;
+  const contentWidth = (setup.orientation === 'landscape' ? paper.h : paper.w)
+    - ((margins.left ?? 1) + (margins.right ?? 1)) * 1440;
+  const tableWidth = cssLenToTwips(tableEl.style.width)
+    || Math.max(1, contentWidth * (tableEl.style.width.endsWith('%') ? parseFloat(tableEl.style.width) / 100 : 1));
+  const colW = Math.floor(tableWidth / nCols);
+  const widths = Array(nCols).fill(colW);
+  const assigned = new Set();
+  for (const row of grid) for (let c = 0; c < row.length; c++) {
+    const slot = row[c];
+    if (!slot?.origin) continue;
+    const raw = slot.cell.style.width;
+    const width = raw.endsWith('%') ? Math.round(tableWidth * parseFloat(raw) / 100) : cssLenToTwips(raw);
+    if (width > 0) for (let x = c; x < c + slot.colspan; x++) {
+      if (!assigned.has(x) || slot.colspan === 1) { widths[x] = Math.round(width / slot.colspan); assigned.add(x); }
+    }
+  }
+  const actualWidth = widths.reduce((a, b) => a + b, 0);
+  let xml = `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="${actualWidth}" w:type="dxa"/>` +
     `<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>` +
-    `</w:tblPr><w:tblGrid>${`<w:gridCol w:w="${colW}"/>`.repeat(nCols)}</w:tblGrid>`;
+    `${tableEl.style.tableLayout === 'fixed' ? '<w:tblLayout w:type="fixed"/>' : ''}</w:tblPr><w:tblGrid>${widths.map(w => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>`;
   for (let r = 0; r < grid.length; r++) {
     xml += "<w:tr>";
+    const rowHeight = Math.max(cssLenToTwips(trs[r]?.style.height) || 0,
+      ...[...(trs[r]?.cells || [])].filter(c => c.rowSpan === 1).map(c => cssLenToTwips(c.style.height) || 0));
+    if (rowHeight > 0) xml += `<w:trPr><w:trHeight w:val="${rowHeight}" w:hRule="atLeast"/></w:trPr>`;
     let c = 0;
     while (c < nCols) {
       const slot = grid[r][c];
       if (!slot) { // empty filler cell
-        xml += `<w:tc><w:tcPr><w:tcW w:w="${colW}" w:type="dxa"/></w:tcPr><w:p/></w:tc>`;
+        xml += `<w:tc><w:tcPr><w:tcW w:w="${widths[c]}" w:type="dxa"/></w:tcPr><w:p/></w:tc>`;
         c++;
         continue;
       }
       const { cell, origin, top, colspan } = slot;
-      const tcPr = [`<w:tcW w:w="${colW * colspan}" w:type="dxa"/>`];
+      const tcPr = [`<w:tcW w:w="${widths.slice(c, c + colspan).reduce((a, b) => a + b, 0)}" w:type="dxa"/>`];
       if (colspan > 1) tcPr.push(`<w:gridSpan w:val="${colspan}"/>`);
       const rowspan = Math.max(1, parseInt(cell.getAttribute("rowspan"), 10) || 1);
       if (rowspan > 1) tcPr.push(origin ? `<w:vMerge w:val="restart"/>` : `<w:vMerge/>`);
@@ -1878,7 +1932,7 @@ function contentTypesXml(ctx, baseText = "") {
     defaults += `<Default Extension="${e}" ContentType="${mime}"/>`;
   }
   const commentsOverride = ctx.commentIds.size
-    ? `<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>`
+    ? `<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.ms-word.commentsExtended+xml"/>`
     : "";
   const chromeOverrides = (ctx.headerFooterFiles || []).map((f) =>
     `<Override PartName="/word/${f.name}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${f.name.startsWith("header") ? "header" : "footer"}+xml"/>`
@@ -1911,7 +1965,7 @@ function docRelsXml(ctx, baseText = "") {
   const numberingId = baseText ? `rId${ctx.nextRelId++}` : "rId2";
   const commentsId = baseText ? `rId${ctx.nextRelId++}` : "rId3";
   const commentsRel = ctx.commentIds.size
-    ? `<Relationship Id="${commentsId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>`
+    ? `<Relationship Id="${commentsId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rId${ctx.nextRelId++}" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/>`
     : "";
   const generated = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
@@ -1924,23 +1978,32 @@ function docRelsXml(ctx, baseText = "") {
     const type = node.getAttribute("Type") || "";
     // styles/numbering/comments are singleton semantic relationships; newly
     // allocated image/link/header relationships are keyed by their unique Id.
-    if (/\/(?:styles|numbering|comments)$/.test(type)) return `T:${type}`;
+    if (/\/(?:styles|numbering|comments|commentsExtended)$/.test(type)) return `T:${type}`;
     return `I:${node.getAttribute("Id")}`;
   });
 }
 
-function commentsXml(ctx) {
-  let out = "";
+function commentParts(ctx) {
+  let out = "", extended = "", paragraphId = 1, replyId = ctx.commentIds.size;
+  const append = (c, num, parent) => {
+    let paraId;
+    const body = String(c.text || "").split("\n").map(line => {
+      paraId = (paragraphId++).toString(16).toUpperCase().padStart(8, '0');
+      return `<w:p w14:paraId="${paraId}"><w:r><w:t xml:space="preserve">${escXml(line)}</w:t></w:r></w:p>`;
+    }).join('');
+    out += `<w:comment w:id="${num}" w:author="${escXml(c.author || "Unknown")}" w:date="${tsIso(c.createdAt)}" w:initials="${escXml(String(c.author || "?").slice(0, 2).toUpperCase())}">${body}</w:comment>`;
+    extended += `<w15:commentEx w15:paraId="${paraId}"${parent ? ` w15:paraIdParent="${parent}"` : ''} w15:done="${c.resolved ? 1 : 0}"/>`;
+    return paraId;
+  };
   for (const [cid, num] of ctx.commentIds) {
     const c = ctx.commentMeta.get(cid) || {};
-    const paras = [c.text || "", ...((c.replies || []).map((r) => `${r.author || "?"}: ${r.text || ""}`))].filter(Boolean);
-    const body = paras.map((t) =>
-      t.split("\n").map((ln) => `<w:p><w:r><w:t xml:space="preserve">${escXml(ln)}</w:t></w:r></w:p>`).join("")
-    ).join("") || "<w:p/>";
-    out += `<w:comment w:id="${num}" w:author="${escXml(c.author || "Unknown")}" w:date="${tsIso(c.createdAt)}" w:initials="${escXml(String(c.author || "?").slice(0, 2).toUpperCase())}">${body}</w:comment>`;
+    const parent = append(c, num);
+    for (const reply of c.replies || []) append(reply, replyId++, parent);
   }
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-    `<w:comments xmlns:w="${W}">${out}</w:comments>`;
+  return {
+    comments: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="${W}" xmlns:w14="${W14}" xmlns:mc="${MC}" mc:Ignorable="w14">${out}</w:comments>`,
+    extended: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w15:commentsEx xmlns:w15="${W15}">${extended}</w15:commentsEx>`,
+  };
 }
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -2118,6 +2181,33 @@ export async function buildDocxFromHtml(html, opts = {}) {
     try { baseFiles = await unzip(opts.baseDocx); }
     catch (e) { console.warn("base DOCX could not be opened; exporting a new package:", e.message); }
   }
+  if (baseFiles && opts.comments !== undefined) {
+    // These parts refer to paragraph/comment IDs that we regenerate below.
+    // Keep unrelated source parts, but never revive deleted comments or retain
+    // modern comment metadata linked to IDs from the previous revision.
+    const removed = new Set(['word/comments.xml', 'word/commentsExtended.xml', 'word/commentsIds.xml', 'word/commentsExtensible.xml']);
+    const relsPath = 'word/_rels/document.xml.rels';
+    const relsText = decodePart(baseFiles, relsPath);
+    if (relsText) {
+      const rels = parseXml(relsText);
+      for (const rel of [...rels.documentElement.children]) {
+        if (/\/(?:comments|commentsExtended|commentsIds|commentsExtensible)$/.test(rel.getAttribute('Type') || '')) {
+          removed.add(resolveTarget(rel.getAttribute('Target') || ''));
+          rel.remove();
+        }
+      }
+      baseFiles.set(relsPath, enc.encode(serializeXmlNode(rels.documentElement)));
+    }
+    const typesText = decodePart(baseFiles, '[Content_Types].xml');
+    if (typesText) {
+      const types = parseXml(typesText);
+      for (const type of [...types.documentElement.children]) {
+        if (removed.has((type.getAttribute('PartName') || '').replace(/^\//, ''))) type.remove();
+      }
+      baseFiles.set('[Content_Types].xml', enc.encode(serializeXmlNode(types.documentElement)));
+    }
+    for (const name of removed) baseFiles.delete(name);
+  }
   const ctx = {
     rels: [], media: [], images: new Map(),
     hrefRels: new Map(), nextRelId: baseFiles ? relationshipMaxId(baseFiles) + 1 : 10,
@@ -2125,6 +2215,7 @@ export async function buildDocxFromHtml(html, opts = {}) {
     revId: 1,
     commentMeta: new Map((opts.comments || []).map((c) => [c.id, c])),
     commentIds: new Map(),
+    pageSetup: opts.pageSetup,
     headerFooterFiles: [],
     baseFiles,
   };
@@ -2137,6 +2228,7 @@ export async function buildDocxFromHtml(html, opts = {}) {
   container.innerHTML = html || "<p></p>";
   await collectImages(container, ctx);
   const documentXml = domToDocumentXml(container, ctx, opts.pageSetup);
+  for (const cid of ctx.commentMeta.keys()) ctx.commentId(cid);
   const files = baseFiles ? new Map(baseFiles) : new Map();
   files.set("[Content_Types].xml", enc.encode(contentTypesXml(ctx, decodeBytes(baseFiles && baseFiles.get("[Content_Types].xml")))));
   if (!files.has("_rels/.rels")) files.set("_rels/.rels", enc.encode(PKG_RELS));
@@ -2146,7 +2238,11 @@ export async function buildDocxFromHtml(html, opts = {}) {
   files.set("word/numbering.xml", enc.encode(numberingXml(ctx)));
   files.set("docProps/core.xml", enc.encode(coreXml(opts.title)));
   files.set("docProps/app.xml", enc.encode(APP_XML));
-  if (ctx.commentIds.size) files.set("word/comments.xml", enc.encode(commentsXml(ctx)));
+  if (ctx.commentIds.size) {
+    const parts = commentParts(ctx);
+    files.set("word/comments.xml", enc.encode(parts.comments));
+    files.set("word/commentsExtended.xml", enc.encode(parts.extended));
+  }
   for (const f of ctx.headerFooterFiles) files.set("word/" + f.name, enc.encode(f.xml));
   for (const m of ctx.media) files.set("word/media/" + m.name, m.bytes);
   return zip(files);

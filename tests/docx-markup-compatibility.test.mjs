@@ -11,6 +11,54 @@ const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const V = "urn:schemas-microsoft-com:vml";
 
+test("comment replies keep their author, text, timestamp and parent across DOCX saves", async () => {
+  const comments = [{ id: 'thread', author: 'Alice', text: 'First line\nSecond line', createdAt: 1700000000000, resolved: true,
+    replies: [{ author: 'Bob', text: 'Reply <one>\nNext line', createdAt: 1700000010000 },
+      { author: '陈', text: '已确认', createdAt: 1700000020000 }] }];
+  const blob = await buildDocxFromHtml('<p><span class="comment-ref" data-cid="thread">Anchor</span></p>', { comments });
+  const buffer = await blob.arrayBuffer();
+  const imported = await importDocx(buffer);
+  assert.equal(imported.comments.length, 1);
+  assert.deepEqual({ ...imported.comments[0], id: 'thread' }, comments[0]);
+  const files = await unzip(buffer);
+  const ex = new DOMParser().parseFromString(new TextDecoder().decode(files.get('word/commentsExtended.xml')), 'application/xml');
+  const nodes = [...ex.documentElement.children];
+  assert.equal(nodes[1].getAttribute('w15:paraIdParent'), nodes[0].getAttribute('w15:paraId'));
+  const again = await buildDocxFromHtml(imported.html, { comments: imported.comments, baseDocx: buffer });
+  const reopened = await importDocx(await again.arrayBuffer());
+  assert.deepEqual(reopened.comments, imported.comments);
+  const deleted = await buildDocxFromHtml('<p>Anchor</p>', { comments: [], baseDocx: buffer });
+  assert.deepEqual((await importDocx(await deleted.arrayBuffer())).comments, []);
+});
+
+test("resized table column widths and row heights survive DOCX export and import", async () => {
+  const blob = await buildDocxFromHtml('<table style="width:500px;table-layout:fixed"><tbody><tr style="height:72px"><td style="width:320px">Left</td><td style="width:180px">Right</td></tr></tbody></table>');
+  const buffer = await blob.arrayBuffer();
+  const files = await unzip(buffer);
+  const xml = new TextDecoder().decode(files.get('word/document.xml'));
+  assert.match(xml, /<w:gridCol w:w="4800"\/>/);
+  assert.match(xml, /<w:gridCol w:w="2700"\/>/);
+  assert.match(xml, /<w:trHeight w:val="1080" w:hRule="atLeast"\/>/);
+  const imported = await importDocx(buffer);
+  const doc = new DOMParser().parseFromString(imported.html, 'text/html');
+  assert.equal(doc.querySelector('table').style.width, '500px');
+  assert.equal(doc.querySelector('tr').style.height, '72px');
+  assert.equal(doc.querySelector('td').style.width, '320px');
+});
+
+test("explicit blank pages retain their boundaries without accumulating empty paragraphs", async () => {
+  let html = '<p>Before</p><p class="page-break"><br></p><p><br></p><p class="page-break"><br></p><p>After</p>';
+  for (let i = 0; i < 2; i++) {
+    const blob = await buildDocxFromHtml(html);
+    html = (await importDocx(await blob.arrayBuffer())).html;
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    assert.equal(doc.querySelectorAll('.page-break').length, 2);
+    assert.equal(doc.querySelectorAll('p').length, 5);
+    assert.equal(doc.querySelector('p').textContent, 'Before');
+    assert.equal(doc.querySelector('p:last-child').textContent, 'After');
+  }
+});
+
 function assertChoiceNamespace(outputXml) {
   const output = new DOMParser().parseFromString(outputXml, "application/xml");
   const choice = output.getElementsByTagNameNS(MC, "Choice")[0];

@@ -19,6 +19,7 @@ import {
   restoreSelection,
   insertImage,
   openTableDialog,
+  tableHtml,
   openLinkDialog,
   openSymbolDialog,
   openWordArtDialog,
@@ -148,6 +149,7 @@ async function main() {
     pageSetup: { ...DEFAULT_PAGE_SETUP },
   };
   let docComments = [];
+  const replyDrafts = new Map();
 
   // ---- clean serialization (pagination spacers + UI marks stripped) ----
   function clearPaginationOffset(el) {
@@ -185,6 +187,7 @@ async function main() {
 
   // ---- visual pagination: simulate separate sheets ----
   let paginateTimer = null;
+  let revealInsertedPage = false;
   let ruler = null;
   let pageMetrics = {
     count: 1,
@@ -205,7 +208,12 @@ async function main() {
       const wrap = document.querySelector("#editor-wrap");
       const savedTop = wrap ? wrap.scrollTop : 0;
       paginate();
-      if (wrap && wrap.scrollTop !== savedTop) wrap.scrollTop = savedTop;
+      if (revealInsertedPage) {
+        revealInsertedPage = false;
+        const sel = window.getSelection();
+        if (sel.rangeCount && editor.contains(sel.anchorNode))
+          scrollElementIntoEditorView(editor, sel.getRangeAt(0));
+      } else if (wrap && wrap.scrollTop !== savedTop) wrap.scrollTop = savedTop;
     }, 180);
   }
   function paginate() {
@@ -537,6 +545,7 @@ async function main() {
     if (ruler) ruler.render();
   }
   window.addEventListener("resize", schedulePaginate);
+  editor.addEventListener('pageinsert', () => { revealInsertedPage = true; schedulePaginate(); });
   editor.addEventListener("load", schedulePaginate, true); // images finishing load
   // Side panels are flex siblings of the paper. Opening or closing one can
   // change #page's actual width without firing window.resize; text then
@@ -1120,6 +1129,7 @@ async function main() {
   };
 
   async function formalSave(reason = "manual", keepalive = false) {
+    commitReplyDrafts();
     scheduleSave();
     await autosaver.flush();
     if (autosaver.lastError) throw autosaver.lastError;
@@ -1170,6 +1180,18 @@ async function main() {
   // ---------------------------------------------------------------
   const commentsPanel = $("comments-panel");
   const commentsItems = $("comments-items");
+
+  function commitReplyDrafts() {
+    let changed = false;
+    for (const [id, text] of replyDrafts) {
+      const comment = docComments.find(c => c.id === id);
+      if (!comment || !text.trim()) continue;
+      (comment.replies ||= []).push({ author: userName, text: text.trim(), createdAt: Date.now() });
+      replyDrafts.delete(id);
+      changed = true;
+    }
+    if (changed) { renderComments(); scheduleSave(); }
+  }
 
   function commentAnchors(cid) {
     return editor.querySelectorAll(
@@ -1235,24 +1257,40 @@ async function main() {
       replyBtn.textContent = t("comments.reply");
       replyBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        const existing = card.querySelector('.comment-reply-editor');
+        if (existing) { existing.querySelector('input').focus(); return; }
+        const form = document.createElement('form');
+        form.className = 'comment-reply-editor';
         const input = document.createElement("input");
         input.type = "text";
         input.placeholder = t("comments.replyPlaceholder");
         input.className = "comment-reply-input";
-        actions.before(input);
-        input.focus();
-        input.addEventListener("keydown", (ev) => {
-          if (ev.key === "Enter" && input.value.trim()) {
-            c.replies = c.replies || [];
-            c.replies.push({
-              author: userName,
-              text: input.value.trim(),
-              createdAt: Date.now(),
-            });
-            renderComments(c.id);
-            scheduleSave();
-          } else if (ev.key === "Escape") input.remove();
+        input.value = replyDrafts.get(c.id) || '';
+        input.addEventListener('input', () => replyDrafts.set(c.id, input.value));
+        const submit = document.createElement('button');
+        submit.type = 'submit';
+        submit.textContent = t('comments.saveReply');
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = t('dlg.cancel');
+        cancel.addEventListener('click', () => { replyDrafts.delete(c.id); form.remove(); });
+        form.append(input, submit, cancel);
+        form.addEventListener('click', ev => ev.stopPropagation());
+        form.addEventListener('submit', ev => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (!input.value.trim()) { input.focus(); return; }
+          (c.replies ||= []).push({ author: userName, text: input.value.trim(), createdAt: Date.now() });
+          replyDrafts.delete(c.id);
+          renderComments(c.id);
+          scheduleSave();
         });
+        input.addEventListener("keydown", (ev) => {
+          if (ev.key === 'Enter' && (ev.isComposing || ev.keyCode === 229)) ev.preventDefault();
+          if (ev.key === 'Escape') { replyDrafts.delete(c.id); form.remove(); ev.stopPropagation(); }
+        });
+        actions.before(form);
+        input.focus();
       });
       const resolveBtn = document.createElement("button");
       resolveBtn.textContent = c.resolved
@@ -1278,6 +1316,7 @@ async function main() {
           p.normalize();
         }
         docComments = docComments.filter((x) => x.id !== c.id);
+        replyDrafts.delete(c.id);
         renderComments();
         scheduleSave();
         emitToHost("commentDelete", { id: c.id });
@@ -1287,6 +1326,7 @@ async function main() {
       card.addEventListener("click", () => jumpToComment(c.id));
       li.appendChild(card);
       commentsItems.appendChild(li);
+      if (replyDrafts.has(c.id)) replyBtn.click();
     }
   }
   function openCommentsPanel(focusCid) {
@@ -1524,6 +1564,7 @@ async function main() {
       pageSetup: meta.pageSetup || { ...DEFAULT_PAGE_SETUP },
     };
     docComments = meta.comments || [];
+    replyDrafts.clear();
     track.setEnabled(!!meta.trackChanges);
     syncTrackUI();
     titleInput.value = meta.title;
@@ -1791,6 +1832,7 @@ async function main() {
       exportMenu.classList.add("hidden");
   });
   async function doExport(fmt) {
+    commitReplyDrafts();
     const title = titleInput.value || "document";
     setStatus("saving");
     try {
@@ -2430,14 +2472,7 @@ async function main() {
             1,
             Math.min(20, parseInt(m.args && m.args.cols, 10) || 2),
           );
-          let html = "<table><tbody>";
-          for (let r = 0; r < rows; r++) {
-            html += "<tr>";
-            for (let c = 0; c < cols; c++) html += "<td><br></td>";
-            html += "</tr>";
-          }
-          html += "</tbody></table><p><br></p>";
-          insertHtmlAtCaret(editor, html);
+          insertHtmlAtCaret(editor, tableHtml(rows, cols));
           scheduleSave();
           schedulePaginate();
           reply({ ok: true });
@@ -2595,6 +2630,7 @@ async function main() {
 
         // ---- export ----
         case "export": {
+          commitReplyDrafts();
           const fmt = String((m.args && m.args.fmt) || "html");
           const title = (titleInput.value || "document").trim();
           try {

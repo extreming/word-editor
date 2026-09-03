@@ -291,7 +291,7 @@ const ALLOWED = {
 const ALLOWED_STYLES = new Set([
   "color", "background-color", "font-size", "font-family", "font-weight", "font-style",
   "text-decoration", "text-decoration-line", "text-align", "text-indent",
-  "line-height", "vertical-align", "width", "height", "max-width",
+  "line-height", "vertical-align", "width", "height", "max-width", "table-layout",
   // image editing + shapes
   "border", "border-width", "border-style", "border-color", "border-top", "border-radius",
   "float", "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
@@ -299,7 +299,7 @@ const ALLOWED_STYLES = new Set([
   // free-floating shape objects
   "position", "left", "top", "right", "bottom", "z-index",
 ]);
-const KEEP_CLASSES = ["page-break", "pb", "comment-ref", "resolved", "tc-ins", "tc-del", "wordart", "shape", "ooxml-object", "ooxml-object-label", "has-preview"];
+const KEEP_CLASSES = ["page-break", "pb", "editor-table", "comment-ref", "resolved", "tc-ins", "tc-del", "wordart", "shape", "ooxml-object", "ooxml-object-label", "has-preview"];
 // classes matching these prefixes are also preserved (WordArt / shape variants)
 const KEEP_CLASS_RE = /^(wa-\d+|shape-[a-z]+|ooxml-[a-z-]+|omml-[a-z-]+)$/;
 const DROP_TAGS = new Set(["script", "style", "meta", "link", "head", "title", "iframe", "object", "embed", "applet", "noscript", "svg", "math", "template", "form", "input", "button", "select", "textarea", "audio", "video"]);
@@ -450,15 +450,7 @@ export function openTableDialog(editor) {
       onClick: () => {
         const rows = Math.min(50, Math.max(1, parseInt(rowsIn.value, 10) || 3));
         const cols = Math.min(20, Math.max(1, parseInt(colsIn.value, 10) || 3));
-        let html = "<table><tbody>";
-        for (let r = 0; r < rows; r++) {
-          html += "<tr>";
-          const tag = headerIn.checked && r === 0 ? "th" : "td";
-          for (let c = 0; c < cols; c++) html += `<${tag}><br></${tag}>`;
-          html += "</tr>";
-        }
-        html += "</tbody></table><p><br></p>";
-        insertHtmlAtCaret(editor, html);
+        insertHtmlAtCaret(editor, tableHtml(rows, cols, headerIn.checked));
       },
     },
   ]);
@@ -542,10 +534,52 @@ export function insertImage(editor) {
 // ---------------------------------------------------------------
 // Insert menu content: page break / blank page / WordArt / shapes
 // ---------------------------------------------------------------
-const PAGEBREAK_HTML = '<p class="page-break"><br></p><p><br></p>';
-const BLANKPAGE_HTML = '<p class="page-break"><br></p><p><br></p><p class="page-break"><br></p><p><br></p>';
-export function insertPageBreak(editor) { insertHtmlAtCaret(editor, PAGEBREAK_HTML); }
-export function insertBlankPage(editor) { insertHtmlAtCaret(editor, BLANKPAGE_HTML); }
+function insertPageBoundary(editor, blank) {
+  editor.focus();
+  restoreSelection(editor);
+  const sel = window.getSelection();
+  const range = sel.rangeCount && editor.contains(sel.anchorNode)
+    ? sel.getRangeAt(0) : document.createRange();
+  if (!editor.contains(range.startContainer)) { range.selectNodeContents(editor); range.collapse(false); }
+  range.deleteContents();
+  let root = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+  while (root !== editor && root.parentElement !== editor) root = root.parentElement;
+  let after;
+  if (root !== editor && root.tagName === "TABLE") {
+    // A page boundary belongs to document flow, never inside a table cell.
+    after = root.nextSibling;
+  } else if (root !== editor) {
+    const tail = range.cloneRange();
+    tail.setEndAfter(root);
+    const fragment = tail.extractContents();
+    // Splitting at the document end produces an empty clone of the paragraph.
+    // Do not turn that clone into an extra page after the requested blank page.
+    if (!fragment.textContent && !fragment.querySelector('img,table,hr,.ooxml-object,.page-break')) fragment.replaceChildren();
+    after = root.nextSibling;
+    editor.insertBefore(fragment, after);
+    after = root.nextSibling;
+  } else after = editor.childNodes[range.startOffset] || null;
+  const marker = () => el("p", { class: "page-break" }, [el("br")]);
+  const reuseAfter = !blank && after?.nodeType === 1 && /^(P|DIV|H[1-6])$/.test(after.tagName);
+  const landing = reuseAfter ? after : el("p", {}, [el("br")]);
+  editor.insertBefore(marker(), after);
+  if (!reuseAfter) editor.insertBefore(landing, after);
+  if (blank && after) editor.insertBefore(marker(), after);
+  focusTableTarget(editor, landing);
+  fireInput(editor);
+  editor.dispatchEvent(new Event('pageinsert'));
+}
+export function insertPageBreak(editor) { insertPageBoundary(editor, false); }
+export function insertBlankPage(editor) { insertPageBoundary(editor, true); }
+
+export function tableHtml(rows, cols, header = false) {
+  let html = '<table class="editor-table" style="width:100%;table-layout:fixed"><tbody>';
+  for (let r = 0; r < rows; r++) {
+    const tag = header && r === 0 ? "th" : "td";
+    html += "<tr>" + `<${tag} style="width:${100 / cols}%;height:40px"><br></${tag}>`.repeat(cols) + "</tr>";
+  }
+  return html + "</tbody></table><p><br></p>";
+}
 
 // WordArt: decorative text styled entirely by CSS classes (round-trips through
 // the sanitizer as span + wa-N class; keeps its text in .docx export).
@@ -826,6 +860,45 @@ export function createFindPanel(editor, host) {
 // ---------------------------------------------------------------
 // Table operations (shared by table toolbar and context menu)
 // ---------------------------------------------------------------
+function prepareTable(table) {
+  for (const c of table.querySelectorAll('[data-pg-rowspan]')) {
+    const value = c.getAttribute('data-pg-rowspan');
+    if (value) c.setAttribute('rowspan', value); else c.removeAttribute('rowspan');
+    c.removeAttribute('data-pg-rowspan');
+  }
+  for (const row of table.querySelectorAll('tr[data-pg-row]')) row.remove();
+}
+function tableGrid(table) {
+  const rows = [...table.rows].filter(r => !r.hasAttribute('data-pg-row'));
+  const grid = [], origins = new Map();
+  rows.forEach((row, r) => {
+    grid[r] ||= [];
+    let col = 0;
+    for (const cell of row.cells) {
+      while (grid[r][col]) col++;
+      const rawSpan = cell.hasAttribute('data-pg-rowspan') ? Number(cell.getAttribute('data-pg-rowspan') || 1) : cell.rowSpan;
+      const rs = rawSpan === 0 ? rows.length - r : Math.min(rawSpan, rows.length - r);
+      origins.set(cell, { row: r, col, rs, cs: cell.colSpan });
+      for (let y = r; y < r + rs; y++) {
+        grid[y] ||= [];
+        for (let x = col; x < col + cell.colSpan; x++) grid[y][x] = cell;
+      }
+      col += cell.colSpan;
+    }
+  });
+  return { rows, grid, origins, cols: Math.max(0, ...grid.map(r => r.length)) };
+}
+function focusTableTarget(editor, target) {
+  if (!editor || !target) return;
+  editor.focus();
+  const range = document.createRange();
+  range.selectNodeContents(target);
+  range.collapse(true);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  saveSelection(editor);
+}
 function cellIndexInRow(cell) {
   let i = 0;
   for (const c of cell.parentElement.children) {
@@ -867,25 +940,42 @@ function tableInsertCol(cell, right) {
 }
 function tableDeleteRow(cell) {
   const tbl = cell.closest("table");
-  cell.parentElement.remove();
-  if (tbl && !tbl.querySelector("tr")) tbl.remove();
-}
-function tableDeleteCol(cell) {
-  const idx = cellIndexInRow(cell);
-  const tbl = cell.closest("table");
-  for (const row of tbl.querySelectorAll("tr")) {
-    const c = cellAtIndex(row, idx);
-    if (c) {
-      const span = Math.max(1, parseInt(c.getAttribute("colspan"), 10) || 1);
-      if (span > 1) c.setAttribute("colspan", span - 1);
-      else c.remove();
+  prepareTable(tbl);
+  const { rows, grid, origins } = tableGrid(tbl);
+  const { row: r, col } = origins.get(cell);
+  if (rows.length === 1) return tableDelete(cell);
+  for (const [c, pos] of origins) {
+    if (pos.row < r && pos.row + pos.rs > r) c.rowSpan = pos.rs - 1;
+    else if (pos.row === r && pos.rs > 1) {
+      c.rowSpan = pos.rs - 1;
+      const next = rows[r + 1];
+      const ref = [...next.cells].find(n => origins.get(n).col > pos.col);
+      next.insertBefore(c, ref || null);
     }
   }
-  if (!tbl.querySelector("td,th")) tbl.remove();
+  rows[r].remove();
+  const target = grid[r + 1]?.[col] || grid[r - 1]?.[col];
+  focusTableTarget(tbl.closest('[contenteditable="true"]'), target?.isConnected ? target : tbl.querySelector('td,th'));
+}
+function tableDeleteCol(cell) {
+  const tbl = cell.closest("table");
+  prepareTable(tbl);
+  const { grid, origins, cols } = tableGrid(tbl);
+  const { row, col } = origins.get(cell);
+  if (cols <= 1) return tableDelete(cell);
+  const target = grid[row][col + 1] || grid[row][col - 1];
+  for (const c of new Set(grid.map(r => r[col]).filter(Boolean))) {
+    if (c.colSpan > 1) c.colSpan--; else c.remove();
+  }
+  focusTableTarget(tbl.closest('[contenteditable="true"]'), target?.isConnected ? target : tbl.querySelector('td,th'));
 }
 function tableDelete(cell) {
   const tbl = cell.closest("table");
-  if (tbl) tbl.remove();
+  if (!tbl) return;
+  const editor = tbl.closest('[contenteditable="true"]');
+  const landing = el('p', {}, [el('br')]);
+  tbl.replaceWith(landing);
+  focusTableTarget(editor, landing);
 }
 function tableMergeRight(cell) {
   const next = cell.nextElementSibling;
@@ -941,7 +1031,7 @@ function currentCell(editor) {
   let n = sel.anchorNode;
   if (n && n.nodeType === 3) n = n.parentElement;
   while (n && n !== editor) {
-    if (n.tagName === "TD" || n.tagName === "TH") return n;
+    if ((n.tagName === "TD" || n.tagName === "TH") && editor.contains(n) && !n.closest('[data-pg-row]')) return n;
     n = n.parentElement;
   }
   return null;
@@ -949,7 +1039,17 @@ function currentCell(editor) {
 
 export function attachTableToolbar(editor, wrap) {
   const bar = el("div", { class: "table-toolbar hidden", id: "table-toolbar" });
-  const withCell = (fn) => () => { const c = currentCell(editor); if (c) { fn(c); fireInput(editor); } };
+  let activeCell = null;
+  const withCell = (fn) => () => {
+    const c = currentCell(editor) || (editor.contains(activeCell) ? activeCell : null);
+    if (c && editor.isContentEditable) {
+      prepareTable(c.closest('table'));
+      fn(c);
+      activeCell = currentCell(editor);
+      bar.classList.toggle('hidden', !activeCell);
+      fireInput(editor);
+    }
+  };
 
   bar.append(
     el("span", { class: "tt-label" }, [t("table.tt.label")]),
@@ -971,15 +1071,96 @@ export function attachTableToolbar(editor, wrap) {
     btn(t("table.tt.delCol"), t("table.tt.delColTitle"), withCell(tableDeleteCol)),
     btn(t("table.tt.delTable"), t("table.tt.delTableTitle"), withCell(tableDelete)),
   );
-  wrap.appendChild(bar);
+  wrap.prepend(bar);
 
   document.addEventListener("selectionchange", () => {
     const sel = window.getSelection();
     const inEditor = sel.rangeCount && editor.contains(sel.anchorNode);
     const cell = inEditor ? currentCell(editor) : null;
-    bar.classList.toggle("hidden", !cell);
+    if (bar.contains(document.activeElement)) return;
+    activeCell = cell;
+    bar.classList.toggle("hidden", !cell || !editor.isContentEditable);
   });
+  attachTableResize(editor);
   return bar;
+}
+
+function attachTableResize(editor) {
+  let drag = null;
+  function edgeAt(event) {
+    if (!editor.isContentEditable) return null;
+    const cell = event.target.closest?.('td,th');
+    if (!cell || !editor.contains(cell) || cell.closest('[data-pg-row]')) return null;
+    const rect = cell.getBoundingClientRect();
+    const axis = Math.abs(event.clientX - rect.right) <= 6 ? 'col'
+      : Math.abs(event.clientY - rect.bottom) <= 6 ? 'row' : null;
+    return axis ? { cell, axis } : null;
+  }
+  editor.addEventListener('pointermove', event => {
+    if (drag) return;
+    const edge = edgeAt(event);
+    editor.style.cursor = edge ? (edge.axis === 'col' ? 'col-resize' : 'row-resize') : '';
+  });
+  editor.addEventListener('pointerleave', () => { if (!drag) editor.style.cursor = ''; });
+  editor.addEventListener('pointerdown', event => {
+    const edge = edgeAt(event);
+    if (!edge || event.button !== 0) return;
+    event.preventDefault();
+    const table = edge.cell.closest('table');
+    prepareTable(table);
+    const model = tableGrid(table), pos = model.origins.get(edge.cell);
+    const scale = table.getBoundingClientRect().width / table.offsetWidth || 1;
+    const widths = Array(model.cols).fill(0);
+    for (const [c, p] of model.origins) {
+      const w = c.getBoundingClientRect().width / scale / p.cs;
+      for (let x = p.col; x < p.col + p.cs; x++) if (!widths[x] || p.cs === 1) widths[x] = w;
+    }
+    const row = model.rows[pos.row + pos.rs - 1];
+    drag = { ...edge, table, model, col: pos.col + pos.cs - 1, widths, row,
+      height: row.getBoundingClientRect().height / scale, scale,
+      x: event.clientX, y: event.clientY, changed: false, original: table.getAttribute('style'),
+      cellStyles: [...model.origins.keys()].map(c => [c, c.getAttribute('style')]), rowStyle: row.getAttribute('style') };
+    document.body.classList.add('table-resizing');
+    document.body.style.setProperty('--table-resize-cursor', edge.axis === 'col' ? 'col-resize' : 'row-resize');
+  });
+  document.addEventListener('pointermove', event => {
+    if (!drag) return;
+    event.preventDefault();
+    const d = drag;
+    d.changed = true;
+    if (d.axis === 'row') {
+      d.row.style.height = Math.max(24, d.height + (event.clientY - d.y) / d.scale) + 'px';
+    } else {
+      const widths = [...d.widths];
+      let delta = (event.clientX - d.x) / d.scale;
+      delta = Math.max(32 - widths[d.col], delta);
+      if (d.col + 1 < widths.length) delta = Math.min(widths[d.col + 1] - 32, delta);
+      widths[d.col] += delta;
+      if (d.col + 1 < widths.length) widths[d.col + 1] -= delta;
+      d.table.style.tableLayout = 'fixed';
+      d.table.style.width = widths.reduce((a, b) => a + b, 0) + 'px';
+      for (const [c, p] of d.model.origins) c.style.width = widths.slice(p.col, p.col + p.cs).reduce((a, b) => a + b, 0) + 'px';
+    }
+  }, { passive: false });
+  const finish = cancel => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (cancel) {
+      for (const [node, style] of [[d.table, d.original], [d.row, d.rowStyle], ...d.cellStyles]) {
+        if (style == null) node.removeAttribute('style'); else node.setAttribute('style', style);
+      }
+    }
+    document.body.classList.remove('table-resizing');
+    document.body.style.removeProperty('--table-resize-cursor');
+    editor.style.cursor = '';
+    focusTableTarget(editor, d.cell);
+    if (d.changed && !cancel) fireInput(editor);
+  };
+  document.addEventListener('pointerup', () => finish(false));
+  document.addEventListener('pointercancel', () => finish(true));
+  window.addEventListener('blur', () => finish(true));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && drag) { e.preventDefault(); finish(true); } });
 }
 
 // ---------------------------------------------------------------
