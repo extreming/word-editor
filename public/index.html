@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DocEditor — Online Document Editor</title>
+  <title>doc-editor — Online Document Editor</title>
   <script>
     if (new URLSearchParams(location.search).get("embed") === "1") {
       location.replace("/editor.html" + location.search + location.hash);
@@ -104,12 +104,12 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
 <body>
 
 <div class="header">
-  <div class="logo">DocEditor</div>
+  <div class="logo">doc-editor</div>
   <div class="nav">
     <a href="/editor.html" data-i18n="home.nav.editor">Editor</a>
     <a href="/embed-demo.html" data-i18n="home.nav.embedDemo">Embed demo</a>
     <a href="/api-docs.html" data-i18n="home.nav.apiDocs">API docs</a>
-    <a href="https://github.com/fjsimonwang/word-editor" target="_blank">GitHub</a>
+    <a href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.links.githubRepo">Upstream repository</a>
     <a href="/editor.html" class="btn-open" data-i18n="home.nav.openEditor">Open editor →</a>
     <button id="btn-lang" data-i18n="lang.switchTo" style="font:13px inherit;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer">中文</button>
   </div>
@@ -128,7 +128,7 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
       <a class="primary" href="#demo" data-i18n="home.hero.tryDemo">Try the demo ↓</a>
       <a class="secondary" href="/editor.html" data-i18n="home.hero.openStandalone">Open standalone editor</a>
       <a class="secondary" href="/js/sdk.js" data-i18n="home.hero.downloadSdk">Download SDK</a>
-      <a class="secondary" href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.hero.starGithub">★ Star on GitHub</a>
+      <a class="secondary" href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.hero.starGithub">Upstream project</a>
     </div>
   </div>
 
@@ -136,7 +136,7 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
     <div class="frame">
       <div class="bar">
         <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-        <span class="label">DocEditor — /</span>
+        <span class="label">doc-editor — /</span>
         <span style="flex:1"></span>
         <span id="frame-status" style="font-size:11px;color:var(--muted)" data-i18n="home.demo.connecting">connecting…</span>
       </div>
@@ -205,7 +205,7 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
     </div>
     <div class="col">
       <h4 data-i18n="home.links.deployment">Deployment</h4>
-      <a href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.links.githubRepo">GitHub repository</a>
+      <a href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.links.githubRepo">Upstream repository</a>
       <span class="plain"><span data-i18n="home.links.docker">Docker:</span> <code>docker compose up -d</code></span>
     </div>
     <div class="col">
@@ -220,16 +220,16 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
 <footer>
   <div class="foot-inner">
     <div class="foot-left" data-i18n="home.footer.tagline">
-      DocEditor — built with vanilla JavaScript, zero dependencies
+      doc-editor — built with vanilla JavaScript, zero dependencies
     </div>
     <div class="foot-right">
       <a href="https://github.com/fjsimonwang/word-editor" target="_blank" class="foot-gh">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-        <span class="foot-gh-text" data-i18n="home.footer.viewGithub">View on GitHub</span>
+        <span class="foot-gh-text" data-i18n="home.footer.viewGithub">View upstream source</span>
         <span class="foot-star" id="gh-stars">★</span>
       </a>
       <span class="foot-meta">
-        <code>git clone https://github.com/fjsimonwang/word-editor.git</code>
+        <span data-i18n="home.links.githubRepo">Upstream repository</span>
       </span>
     </div>
   </div>

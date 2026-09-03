@@ -68,13 +68,16 @@
     try {
       const s = document.currentScript;
       return s ? new URL(s.src).origin : location.origin;
-    } catch { return location.origin; }
+    } catch {
+      return location.origin;
+    }
   })();
 
   function init(opts = {}) {
-    const container = typeof opts.container === "string"
-      ? document.querySelector(opts.container)
-      : opts.container;
+    const container =
+      typeof opts.container === "string"
+        ? document.querySelector(opts.container)
+        : opts.container;
     if (!container) throw new Error("DocEditor.init: container not found");
 
     const baseUrl = (opts.baseUrl || scriptOrigin).replace(/\/$/, "");
@@ -104,7 +107,8 @@
     const hash = secrets.toString() ? `#${secrets.toString()}` : "";
     const iframe = document.createElement("iframe");
     iframe.src = `${baseUrl}/?${q.toString()}${hash}`;
-    iframe.style.cssText = "width:100%;height:100%;border:none;display:block;min-height:400px";
+    iframe.style.cssText =
+      "width:100%;height:100%;border:none;display:block;min-height:400px";
     iframe.allow = "clipboard-read; clipboard-write";
     container.appendChild(iframe);
 
@@ -125,12 +129,20 @@
       }
       if (m.event) {
         const handler = {
-          ready: opts.onReady, document: opts.onDocument,
-          change: opts.onChange, save: opts.onSave,
+          ready: opts.onReady,
+          document: opts.onDocument,
+          change: opts.onChange,
+          save: opts.onSave,
           commentDelete: opts.onCommentDelete,
-          presence: opts.onPresence, error: opts.onError,
+          presence: opts.onPresence,
+          error: opts.onError,
         }[m.event];
-        if (handler) try { handler(m.data); } catch (e) { console.error(e); }
+        if (handler)
+          try {
+            handler(m.data);
+          } catch (e) {
+            console.error(e);
+          }
       }
     }
     window.addEventListener("message", onMessage);
@@ -167,7 +179,8 @@
       find: (query, o) => call("find", { query, ...o }),
       highlightSelection: () => call("highlightSelection"),
       clearHighlight: () => call("clearHighlight"),
-      replaceAll: (query, replacement, o) => call("replaceAll", { query, replacement, ...o }),
+      replaceAll: (query, replacement, o) =>
+        call("replaceAll", { query, replacement, ...o }),
       focus: () => call("focus"),
       undo: () => call("undo"),
       redo: () => call("redo"),
@@ -190,7 +203,8 @@
       indent: () => call("format", { cmd: "indent" }),
       formatBlock: (tag) => call("format", { cmd: "formatBlock", value: tag }),
       foreColor: (color) => call("format", { cmd: "foreColor", value: color }),
-      hiliteColor: (color) => call("format", { cmd: "hiliteColor", value: color }),
+      hiliteColor: (color) =>
+        call("format", { cmd: "hiliteColor", value: color }),
       fontName: (font) => call("format", { cmd: "fontName", value: font }),
       fontSize: (size) => call("format", { cmd: "fontSize", value: size }),
       getSelectedText: () => call("getSelectedText"),

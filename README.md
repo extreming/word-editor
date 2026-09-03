@@ -1,6 +1,6 @@
-# docflow
+# doc-editor
 
-docflow is a browser-based document editor with DOCX import/export, comments,
+doc-editor is a browser-based document editor with DOCX import/export, comments,
 tracked text changes, page layout, PDF tools, and an embedding SDK. The core
 Word-editing client uses **zero npm dependencies**: vanilla ES modules with no
 bundler, the
@@ -11,10 +11,22 @@ a jsdom DOM shim. The server keeps editor working data in `DATA_DIR`; LegalAI
 remains the system of record for formally committed business documents.
 
 
-[Product manual / 产品手册](docs/产品手册.md) ·
-[SDK reference / SDK 方法](docs/sdk方法.md) ·
-[Integration guide](docs/word-editor集成指南.md) ·
-[Deployment guide](docs/word-editor-deployment-guide.md)
+[Product manual / 产品手册](docs/doc-editor产品手册.md) ·
+[SDK reference / SDK 方法](docs/JS%20SDK集成方法说明.md) ·
+[Integration guide](docs/doc-editor集成指南.md) ·
+[Deployment guide](docs/doc-editor-deployment-guide.md)
+
+The Git repository is named `docflow`; the product, npm package and deployment
+identifiers use `doc-editor`. SDK integrations use `DocEditor.init()` and
+`DocEditorRestClient`. The interim `Docflow` / `DocflowRestClient` globals remain
+compatibility aliases. Browser preferences migrate to `doc-editor:` without
+deleting previous values; the existing PDF signing-key database is preserved.
+
+When updating an existing deployment, preserve its actual data directory using
+`HOST_DATA_DIR`, and use `doc-editor` for Compose service commands. The default
+business content path is `/doc-editor/{docId}/content`; keep any custom backend
+path explicitly configured in `BUSINESS_DOCUMENT_CONTENT_PATH`. No business
+backend, Git remote or physical workspace directory is renamed by this change.
 
 [Demo site](https://doc.mochi-flow.com) — a deployed instance may differ from this checkout.
 
@@ -26,7 +38,7 @@ bash run.sh                 # after npm ci; http://localhost:3001
 # or
 npm ci && npm start
 # env overrides:
-PORT=4000 HOST=0.0.0.0 DATA_DIR=/var/word-editor node server.js
+PORT=4000 HOST=0.0.0.0 DATA_DIR=/var/doc-editor node server.js
 ```
 
 Requires Node.js 22. Full env var reference is in
@@ -53,8 +65,8 @@ is later redesigned around many state-driven components.
 ### Docker
 
 ```bash
-docker build -t word-editor .
-docker run -d --name word-editor -p 3001:3001 -v word-editor-data:/app/data word-editor
+docker build -t doc-editor .
+docker run -d --name doc-editor -p 3001:3001 -v doc-editor-data:/app/data doc-editor
 # or: docker compose up -d --build
 ```
 
@@ -196,7 +208,7 @@ Load `public/js/sdk.js` and give its container an explicit height. Wait for
 
 The SDK also exposes content insertion/replacement, formatting, tables/images,
 page setup, headers/footers, comments/review, undo/redo, document library,
-history, and export methods. See [SDK 方法](docs/sdk方法.md) for signatures.
+history, and export methods. See [SDK 方法](docs/JS%20SDK集成方法说明.md) for signatures.
 `close()` submits the document but does not remove the iframe; `destroy()` removes
 the instance but does not save it. `mode: "view"` disables direct body editing
 and hides the toolbar; it is not a server-side authorization boundary.
@@ -271,7 +283,7 @@ REST helper endpoint has the same concurrency guard or browser review behavior.
 | `BUSINESS_REQUEST_TIMEOUT_MS` | `30000` | timeout for host business-system requests; minimum 1000 ms |
 | `BUSINESS_AUTO_COMMIT_ENABLED` | `false` | periodically publish the latest DOCX to the host system; internal draft autosave is unaffected |
 | `BUSINESS_AUTO_COMMIT_INTERVAL_MS` | `300000` | periodic host-system publication interval; minimum 60 seconds |
-| `VERSION_HISTORY_ENABLED` | `true` | docflow internal snapshots; checked-in Compose sets `false` |
+| `VERSION_HISTORY_ENABLED` | `true` | doc-editor internal snapshots; checked-in Compose sets `false` |
 | `DATA_RETENTION_HOURS` | `24` | inactivity period before committed or unconfirmed LegalAI working files are removed |
 | `DATA_CLEANUP_INTERVAL_MS` | `86400000` | periodic lifecycle sweep interval; minimum 60 seconds |
 | `STARTUP_DRAFT_PURGE_ENABLED` | `true` | on startup remove history and scrub draft payloads while retaining lifecycle metadata |
@@ -300,12 +312,12 @@ const editor = DocEditor.init({
 });
 ```
 
-The iframe exchanges that business token for a short-lived docflow token
-only after the docflow server successfully downloads
+The iframe exchanges that business token for a short-lived doc-editor token
+only after the doc-editor server successfully downloads
 `GET {BUSINESS_API_BASE_URL}/doc-editor/{docId}/content`. Draft autosaves update only
-docflow's local working directory. `Ctrl+S`, the File > Save action, the SDK
+doc-editor's local working directory. `Ctrl+S`, the File > Save action, the SDK
 `save()`/`close()` commands, and the best-effort browser `pagehide` hook call
-`POST /api/documents/{docId}/commit`; docflow then uploads the generated
+`POST /api/documents/{docId}/commit`; doc-editor then uploads the generated
 DOCX to the same FileZ-compatible LegalAI content endpoint. The business token
 is retained only in memory for the active process and is never written to the
 document metadata or storage objects.

@@ -136,7 +136,7 @@ function sendVersionPage(res) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Word Editor ${version}</title>
+  <title>doc-editor ${version}</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
     body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: Canvas; color: CanvasText; }
@@ -147,7 +147,7 @@ function sendVersionPage(res) {
 </head>
 <body>
   <main>
-    <h1>Word Editor</h1>
+    <h1>doc-editor</h1>
     <output aria-label="Version">${version}</output>
   </main>
 </body>
@@ -321,7 +321,7 @@ async function publishLegalAiDocument(meta, businessToken, reason) {
   const bytes = await storage.readFile(docxKey(meta.id));
   if (!bytes) throw Object.assign(new Error("generated DOCX is unavailable"), { status: 500 });
 
-  const boundary = `----word-editor-${crypto.randomBytes(12).toString("hex")}`;
+  const boundary = `----doc-editor-${crypto.randomBytes(12).toString("hex")}`;
   const safeName = String(meta.title || meta.id).replace(/["\r\n]/g, "_");
   const prefix = Buffer.from(
     `--${boundary}\r\n` +
@@ -334,6 +334,8 @@ async function publishLegalAiDocument(meta, businessToken, reason) {
     method: "POST",
     headers: legalAiHeaders(businessToken, {
       "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      "X-Doc-Editor-Save-Reason": reason,
+      // Existing business adapters may still consume the original header.
       "X-Word-Editor-Save-Reason": reason,
     }),
     body,
@@ -516,7 +518,7 @@ async function api(req, res, url) {
 
   if (p === "/api/health") return sendJSON(res, 200, { ok: true, uptime: process.uptime() });
 
-  // LegalAI bootstrap is the only unauthenticated word-editor route. The
+  // LegalAI bootstrap is the only unauthenticated doc-editor route. The
   // supplied business token is immediately validated by using it to download
   // the requested contract from LegalAI. After that succeeds we exchange it
   // for a short-lived token scoped to this one editor document.
@@ -1244,10 +1246,10 @@ async function startServer() {
   if (STARTUP_DRAFT_PURGE_ENABLED) await dataLifecycle.purgeDraftsAndHistoryOnStartup();
   await dataLifecycle.runDailyCleanup();
   await dataLifecycle.checkDiskUsage();
-  server.listen(PORT, HOST, () => console.log(`word-editor on http://${HOST}:${PORT}`));
+  server.listen(PORT, HOST, () => console.log(`doc-editor on http://${HOST}:${PORT}`));
 }
 
 void startServer().catch((error) => {
-  console.error("word-editor startup failed:", error);
+  console.error("doc-editor startup failed:", error);
   process.exitCode = 1;
 });

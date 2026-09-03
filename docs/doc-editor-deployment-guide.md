@@ -1,4 +1,6 @@
-# Docflow 第三方业务系统集成部署指南
+# doc-editor 第三方业务系统集成部署指南
+
+命名约定：Git 仓库使用 `docflow`；产品、npm 包、部署服务与镜像使用 `doc-editor`；JavaScript SDK 使用 `DocEditor`。
 
 面向需要在自身页面中嵌入文档编辑器的第三方业务系统开发、部署和运维团队。目标是完成“打开业务文档 → 在线编辑 → 保存回业务系统 → 安全关闭”的完整流程。
 
@@ -10,17 +12,59 @@
 2. **部署编辑器服务**：配置业务接口地址、签名密钥、数据目录及 HTTPS/iframe 访问策略，见第 3、4 节。
 3. **前端嵌入 SDK**：取得业务访问凭证，传入文档 ID，处理就绪、保存和关闭，见第 5 节。
 
-业务系统继续负责用户身份、文档权限、正式文件存储及业务版本。Docflow 负责编辑、草稿、生成 DOCX 和调用业务文件接口，不要求业务系统更换已有数据库或对象存储。
+业务系统继续负责用户身份、文档权限、正式文件存储及业务版本。doc-editor 负责编辑、草稿、生成 DOCX 和调用业务文件接口，不要求业务系统更换已有数据库或对象存储。
 
-```text
-业务前端 ──获取文档访问凭证──> 业务后端
-   │
-   └── DocEditor.init() ──> 编辑器 iframe（独立 HTTPS 域名）
-                               │
-                               ├── 编辑器服务 ──GET 文件──> 业务后端 / 文件存储
-                               ├── 草稿保存、协作 ──> 编辑器服务 / 工作目录
-                               └── save()/close() ──POST DOCX──> 业务后端 / 文件存储
+### 集成架构
+
+```mermaid
+flowchart LR
+  subgraph FRONTEND["① 第三方业务前端"]
+    PAGE["业务页面"]
+    SDK["DocEditor SDK"]
+    IFRAME["编辑器 iframe"]
+    PAGE --> SDK --> IFRAME
+  end
+
+  subgraph EDITOR["② doc-editor 服务"]
+    NGINX["Nginx / HTTPS 入口"]
+    SESSION["编辑会话"]
+    CORE["DOCX 解析与在线编辑"]
+    DRAFT[("工作数据\n草稿 + DOCX + 修订版本")]
+    COMMIT["正式保存"]
+
+    NGINX --> SESSION
+    NGINX --> CORE
+    SESSION --> CORE
+    CORE <--> DRAFT
+    CORE --> COMMIT
+  end
+
+  subgraph BACKEND["③ 第三方业务后端"]
+    AUTH["用户、租户和文档权限校验"]
+    GET["文件下载接口\nGET /.../{docId}/content"]
+    POST["文件回写接口\nPOST /.../{docId}/content"]
+
+    AUTH --> GET
+    AUTH --> POST
+  end
+
+  subgraph STORAGE["④ 第三方业务存储"]
+    DB[("业务数据库\n文档元数据、版本、审计")]
+    FILES[("文件存储\n业务 DOCX 文件")]
+  end
+
+  IFRAME -->|"docId + businessToken"| NGINX
+  SESSION -->|"携带 businessToken 下载原文"| AUTH
+  GET -->|"读取"| FILES
+  FILES -->|"DOCX"| GET
+  GET -->|"DOCX"| SESSION
+  SESSION -->|"文档级临时令牌"| IFRAME
+  COMMIT -->|"携带 businessToken 回写 DOCX"| AUTH
+  POST -->|"更新文件"| FILES
+  POST -->|"更新元数据和业务版本"| DB
 ```
+
+第三方业务系统负责用户身份、访问控制、正式文件和业务版本；doc-editor 负责 iframe 中的编辑体验、工作草稿和 DOCX 转换。业务前端只需从自身后端取得 `docId` 与 `businessToken` 后初始化 SDK；业务文件的下载和正式回写均由编辑器服务按第 2 节约定调用业务后端。
 
 本文使用以下示例配置：
 
@@ -85,16 +129,16 @@ Content-Disposition: attachment; filename="document.docx"
 ```http
 POST /integration/documents/tenant42_document1001/content
 X-Editor-Token: <businessToken>
-X-Word-Editor-Save-Reason: manual
+X-Doc-Editor-Save-Reason: manual
 Content-Type: multipart/form-data; boundary=...
 ```
 
-| 项目       | 约定                                                                     |
-| ---------- | ------------------------------------------------------------------------ |
-| 文件字段名 | `file`                                                                   |
-| 文件类型   | DOCX 二进制，文件名以 `.docx` 结尾                                       |
-| 目标文档   | URL 中的 `docId`，由业务后端映射到业务文件                               |
-| 保存原因   | `X-Word-Editor-Save-Reason`，可为 `manual`、`close`、`timer`、`pagehide` |
+| 项目       | 约定                                                                    |
+| ---------- | ----------------------------------------------------------------------- |
+| 文件字段名 | `file`                                                                  |
+| 文件类型   | DOCX 二进制，文件名以 `.docx` 结尾                                      |
+| 目标文档   | URL 中的 `docId`，由业务后端映射到业务文件                              |
+| 保存原因   | `X-Doc-Editor-Save-Reason`，可为 `manual`、`close`、`timer`、`pagehide` |
 
 业务后端接收文件后，应完成文件落库/对象存储更新及所需的业务版本处理，再返回成功。建议成功响应为：
 
@@ -117,7 +161,7 @@ Content-Type: multipart/form-data; boundary=...
 建议目录：
 
 ```text
-/opt/docflow/
+/opt/doc-editor/
 ├── services/                  # 本仓库代码及下方部署配置
 │   ├── dockflow.zip
 └── data/                      # 编辑器工作数据
@@ -127,19 +171,26 @@ Content-Type: multipart/form-data; boundary=...
 
 ### 3.2 配置环境变量
 
-在 `services/.env` 中填写本环境的值：
-
-```dotenv
-TOKEN_SECRET=replace-with-a-random-secret
-BUSINESS_API_BASE_URL=https://api.example.com
-BUSINESS_DOCUMENT_CONTENT_PATH=/integration/documents/{docId}/content
-BUSINESS_TOKEN_HEADER=X-Editor-Token
-```
-
-使用以下命令生成随机值，替换 `TOKEN_SECRET` 占位符；各环境分别生成并妥善保存：
+在 Linux 服务器上进入 `services` 目录，从模板创建 `.env`：
 
 ```bash
-openssl rand -hex 32
+cd /opt/doc-editor/services
+cp .env.example .env
+```
+
+然后编辑 `.env`，填写本环境的 `BUSINESS_API_BASE_URL`、`BUSINESS_DOCUMENT_CONTENT_PATH` 和 `BUSINESS_TOKEN_HEADER`：
+
+```bash
+vi .env
+```
+
+#### 生成 TOKEN_SECRET
+
+为每个环境生成独立的随机密钥，并写入 `.env`：
+
+```bash
+TOKEN_SECRET="$(openssl rand -hex 32)"
+sed -i "s/^TOKEN_SECRET=.*/TOKEN_SECRET=${TOKEN_SECRET}/" .env
 chmod 600 .env
 ```
 
@@ -149,11 +200,11 @@ chmod 600 .env
 
 ```yaml
 services:
-  word-editor:
+  doc-editor:
     build:
       context: .
       dockerfile: Dockerfile
-    image: docflow-editor:local
+    image: doc-editor:local
     ports:
       - "127.0.0.1:3001:3001"
     volumes:
@@ -203,11 +254,11 @@ SELinux 启用的部署环境如需卷重标记，可按主机策略将数据挂
 启动并验证服务：
 
 ```bash
-cd /opt/docflow/services
+cd /opt/doc-editor/services
 docker compose config --quiet
 docker compose up -d --build
 docker compose ps
-docker compose logs --tail=100 word-editor
+docker compose logs --tail=100 doc-editor
 curl -fsS http://127.0.0.1:3001/api/health
 curl -fsS http://127.0.0.1:3001/version
 ```
@@ -216,10 +267,18 @@ curl -fsS http://127.0.0.1:3001/version
 
 ### 3.4 可选：内网 CA 和旧版 Word 格式
 
+报错：
+
+```
+LegalAI request failed (UNABLE_TO_GET_ISSUER_CERT_LOCALLY): unable to get local issuer certificate。
+```
+
+容器无法访问业务后端，证书验证错误。
+
 业务后端使用私有 CA 时，将其 CA 证书文件只读挂载到容器，并在 Compose 中设置：
 
 ```yaml
-# 合并到上述服务已有的 volumes、environment 中
+# 请替换正式证书路径和名称，合并到上述服务已有的 volumes、environment 中
 volumes:
   - ../data:/app/data
   - /path/to/business-ca.pem:/etc/ssl/certs/business-ca.pem:ro
@@ -233,9 +292,9 @@ environment:
 
 ## 4. 配置 HTTPS、iframe 和 WebSocket
 
-浏览器需要访问 `https://editor.example.com`，编辑器容器需要访问 `BUSINESS_API_BASE_URL`。容器内的 `localhost` 指容器自身，不能直接用于访问宿主机上的业务后端。
+浏览器需要访问编辑器外部地址，例如开发环境的 `https://legaloffice.lenovo.com`；编辑器容器需要访问 `BUSINESS_API_BASE_URL`。
 
-以下为 Nginx 的 `http` 上下文配置片段，适用于 Nginx 与编辑器容器运行在同一宿主机。替换域名和证书路径；Nginx 在其他机器或容器内时，应改用可达的上游地址。
+以下为 Nginx 的 `http` 上下文配置片段，适用于 Nginx 与编辑器容器运行在同一宿主机。示例对应当前开发环境的域名和 iframe 白名单；其他环境应替换域名、证书路径和业务页面来源。Nginx 在其他机器或容器内时，应将 `proxy_pass` 改为可达的编辑器上游地址。
 
 ```nginx
 map $http_upgrade $connection_upgrade {
@@ -245,21 +304,32 @@ map $http_upgrade $connection_upgrade {
 
 server {
     listen 80;
-    server_name editor.example.com;
+  server_name legaloffice.lenovo.com;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl;
-    server_name editor.example.com;
-    ssl_certificate     /etc/nginx/certs/editor.fullchain.pem;
-    ssl_certificate_key /etc/nginx/certs/editor.key;
+    server_name legaloffice.lenovo.com;
+    # 浏览器访问编辑器的 Nginx TLS 证书地址。
+    ssl_certificate     /home/aiadmin/nginx-1.27.2/conf/certs/legaloffice.crt;
+    ssl_certificate_key /home/aiadmin/nginx-1.27.2/conf/certs/legaloffice.key;
     ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
     client_max_body_size 64m;
+
+    # 可嵌入编辑器 iframe 的业务页面来源。按实际环境收紧白名单。
+    set $doc_editor_frame_ancestors "'self' http://localhost:* https://*.t-sy-in.earth.xcloud.lenovo.com https://legal-ai-demo.lenovo.com";
 
     location / {
         proxy_pass http://127.0.0.1:3001;
         proxy_http_version 1.1;
+
+      # 应用默认返回 SAMEORIGIN；跨域 iframe 必须隐藏该响应头。
+      proxy_hide_header X-Frame-Options;
+      add_header Content-Security-Policy "frame-ancestors $doc_editor_frame_ancestors" always;
+
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -270,10 +340,6 @@ server {
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
         proxy_buffering off;
-
-        # 应用默认 SAMEORIGIN；跨域嵌入时替换为明确的业务页面白名单。
-        proxy_hide_header X-Frame-Options;
-        add_header Content-Security-Policy "frame-ancestors 'self' https://app.example.com" always;
     }
 }
 ```
@@ -283,21 +349,15 @@ server {
 ```bash
 nginx -t
 nginx -s reload
-curl -fsSI https://editor.example.com/
-curl -fsS https://editor.example.com/api/health
+curl -fsSI https://legaloffice.lenovo.com/
+curl -fsS https://legaloffice.lenovo.com/api/health
 ```
-
-需确认最终响应允许业务页面嵌入，其他网关没有再次添加冲突的 `X-Frame-Options: SAMEORIGIN`。业务页面自身如有 CSP，需在 `frame-src` 中允许编辑器来源，在 `script-src` 中允许 SDK 来源；内联脚本示例应按业务系统的 CSP 改为外部脚本或使用 nonce。
-
-SDK 模式由 iframe 在编辑器自身来源下调用 REST/WebSocket，业务页面通过 `postMessage` 操作编辑器，通常不需要跨域 REST CORS。业务浏览器直接跨域调用编辑器 REST 是另一种调用方式，当前应用未提供通用 CORS 配置。
-
-`frame-ancestors` 仅控制谁可以嵌入页面，不承担 API 鉴权。当前服务仍保留匿名的独立文档接口，不能把“设置了 TOKEN_SECRET”视为整个服务已受保护。部署方应通过业务网关或网络访问策略限定可访问者及所需路由，并保留 SDK 必需的会话、当前文档接口和 `/ws`；不要把实例直接作为开放的公共文档存储服务。
 
 ## 5. 业务前端嵌入 SDK
 
-### 5.1 由业务后端返回打开参数
+### 5.1 由业务前端拼接参数
 
-业务前端先调用自身后端取得以下数据。下面的 `/api/editor-launch` **是第三方自行实现的示例接口，不是编辑器内置接口**。
+业务前端应取得以下数据。下面的 `/api/editor-launch` **是第三方自行实现的示例接口，不是编辑器内置接口**。
 
 ```json
 {
@@ -311,7 +371,7 @@ SDK 模式由 iframe 在编辑器自身来源下调用 REST/WebSocket，业务�
 }
 ```
 
-后端应先验证当前业务用户能否打开目标文档，再返回固定、受信任的编辑器地址及凭证。`businessToken` 是第 2 节业务文件接口接受的凭证，不是编辑器签发的短期令牌。
+`businessToken` 是第 2 节业务文件接口接受的凭证，不是编辑器签发的短期令牌。
 
 业务凭证有效期应覆盖编辑会话。iframe 会在编辑器令牌到期前尝试刷新，但仍使用最初传入的业务凭证，不会自动刷新业务系统登录态；凭证失效后需由业务系统重新取得凭证并安排重新打开。
 
@@ -453,36 +513,9 @@ SDK 模式由 iframe 在编辑器自身来源下调用 REST/WebSocket，业务�
 更新代码后使用构建命令发布，单纯重启旧镜像不会包含新代码：
 
 ```bash
-cd /opt/docflow/services
+cd /opt/doc-editor/services
 docker compose up -d --build
-docker compose logs --tail=100 word-editor
+docker compose logs --tail=100 doc-editor
 ```
 
 更新前安排正在编辑的用户完成正式保存，保留可回退的镜像及业务正式文档版本。工作目录持久挂载不能阻止应用自己的清理策略；不要在运维脚本中无条件删除数据目录。业务地址及密钥变更也需重新创建容器；轮换 `TOKEN_SECRET` 会使旧文档令牌失效，应安排重新打开。
-
-## 8. 集成验收与故障定位
-
-用第三方真实流程完成以下验收后，再将编辑入口提供给用户：
-
-1. 业务页面可嵌入编辑器，容器健康正常，浏览器 `/ws` 连接成功。
-2. 合法业务用户能打开指定 DOCX；错误凭证、其他租户文档和无写权限操作被业务后端拒绝。
-3. 输入文字、添加批注后调用 `save()`，确认业务后端收到 `file` 字段，并从业务存储重新下载核对内容。
-4. 调用 `close()` 成功后再 `destroy()`，重新打开同一业务文档，内容与正式保存结果一致。
-5. 模拟业务保存失败或凭证过期，页面明确显示失败且未自动销毁编辑器。
-6. 按部署选定的策略验证重启、关闭清理、草稿到期及历史版本；复杂表格、页眉页脚、浮动对象用样本文档核对。
-
-| 现象                          | 优先检查                                                                       |
-| ----------------------------- | ------------------------------------------------------------------------------ |
-| iframe 空白、refused to frame | 编辑器响应的 X-Frame-Options/CSP、业务页面 frame-src、HTTPS 和容器高度         |
-| 503 会话失败                  | TOKEN_SECRET、BUSINESS_API_BASE_URL 是否已配置并生效                           |
-| 打开或保存 401                | 业务凭证、配置的请求头名称、用户文档权限、令牌有效期                           |
-| 502 下载/回写失败             | 容器到业务接口的网络、DNS、CA、超时和业务响应；GET 是否返回了 JSON/登录页      |
-| 501 导入失败                  | 容器未安装 LibreOffice，或 SOFFICE_PATH 指向不存在的程序                       |
-| 422 文档解析失败              | 文件类型、文件损坏、加密文档及旧格式转换结果                                   |
-| HTTP 200 但提示保存失败       | JSON 的 code 是否为 0；业务接口不要使用 code:200 表示成功                      |
-| 草稿有内容但业务文件没变      | 是否只触发了自动草稿保存；是否传入 docId + businessToken；是否等待正式保存完成 |
-| SDK 超时、协作断开            | onReady 是否已触发、代理 WebSocket 升级头、网络和业务保存耗时                  |
-| 保存冲突 409                  | 草稿版本冲突或另一个正式保存进行中；先核对最新状态，再重试                     |
-| 子路径部署导致资源 404        | 改用独立域名根路径，或单独完成应用子路径适配                                   |
-
-完整 SDK 方法见 [JS SDK 集成方法说明](JS%20SDK集成方法说明.md)；产品功能见 [docflow 产品手册](Docflow产品手册.md)。部署后可访问 `/api-docs.html#sdk` 查看 SDK 参考。

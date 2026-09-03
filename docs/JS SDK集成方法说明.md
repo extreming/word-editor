@@ -1,5 +1,7 @@
 # JS SDK集成方法说明
 
+产品正式名称为 `doc-editor`，Git 仓库名称为 `docflow`。SDK 入口使用 `DocEditor.init()`，REST 客户端使用 `DocEditorRestClient`。此前临时使用的 `Docflow` / `DocflowRestClient` 保留为兼容别名，新代码和示例统一使用正式入口。
+
 sdk集成命令导航：/api-docs.html#sdk
 
 通过 `const ed = DocEditor.init(options)` 获取实例，以下方法均通过 `ed.方法名()` 调用。除 `destroy()` 外，实例方法都返回 Promise。

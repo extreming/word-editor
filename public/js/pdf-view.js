@@ -5,6 +5,8 @@
 //
 // Exports: openPdf, closePdf, isPdfMode, getPdfInfo
 
+import { PDF_KEY_DATABASE } from './branding.js';
+
 const PDFJS_VERSION = "3.11.174";
 const PDFJS_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
 const PDFLIB_SRC = "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js";
@@ -64,7 +66,7 @@ function loadPdfLib() {
 // ---- ECDSA signing key (persisted in IndexedDB so the same identity can re-sign) ----
 function openDb() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open("word-editor-pdf", 1);
+    const r = indexedDB.open(PDF_KEY_DATABASE, 1);
     r.onupgradeneeded = () => { r.result.createObjectStore("keys"); };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -996,10 +998,10 @@ function saveSignedMetadata(doc, anns) {
   if (!sigAnns.length) return;
   const meta = sigAnns.map(s => `${s.data.signer || "?"}|${s.data.ts || ""}`).join("; ");
   try {
-    doc.setSubject("DocEditor: " + meta);
-    doc.setKeywords(["word-editor", "signed", "ecdsa-sha-256"]);
-    doc.setProducer("DocEditor PDF viewer");
-    doc.setCreator("DocEditor");
+    doc.setSubject("doc-editor: " + meta);
+    doc.setKeywords(["doc-editor", "signed", "ecdsa-sha-256"]);
+    doc.setProducer("doc-editor PDF viewer");
+    doc.setCreator("doc-editor");
   } catch {}
 }
 

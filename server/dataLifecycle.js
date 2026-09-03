@@ -31,7 +31,7 @@ function createDataLifecycle({
   async function audit(entry) {
     const record = { timestamp: new Date(now()).toISOString(), ...entry };
     await storage.appendFile(auditFile, Buffer.from(`${JSON.stringify(record)}\n`));
-    logger.log("word-editor data lifecycle", record);
+    logger.log("doc-editor data lifecycle", record);
     return record;
   }
 
@@ -192,7 +192,7 @@ function createDataLifecycle({
         criticalPercent,
       };
       await audit(entry);
-      const message = `word-editor data disk ${level}: ${entry.usedPercent}% used`;
+      const message = `doc-editor data disk ${level}: ${entry.usedPercent}% used`;
       if (level === "critical") logger.error(message, entry);
       else logger.warn(message, entry);
     }

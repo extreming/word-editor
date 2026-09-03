@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>DocEditor 全屏测试</title>
+  <title>doc-editor 全屏测试</title>
   <style>
     html, body, #editor-holder {
       width: 100%; height: 100%; margin: 0; overflow: hidden;
@@ -29,11 +29,12 @@
   <div id="test-state">正在打开编辑器…</div>
 
   <script src="/js/sdk.js"></script>
-  <script>
+  <script type="module">
+    import '/js/branding.js';
     (() => {
       "use strict";
 
-      const STORAGE_KEY = "word-editor:fullscreen-test:last-document-id";
+      const STORAGE_KEY = "doc-editor:fullscreen-test:last-document-id";
       const state = document.getElementById("test-state");
       const params = new URLSearchParams(location.search);
       const requestedId = (params.get("doc") || "").trim();

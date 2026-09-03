@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DocEditor — API reference</title>
+  <title>doc-editor — API reference</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
   <link rel="stylesheet" href="/api-docs.css">
 </head>
 <body>
 
   <div class="menu-bar">
-    <h1 data-i18n="apiDocs.title">DocEditor API reference</h1>
+    <h1 data-i18n="apiDocs.title">doc-editor API reference</h1>
     <div class="tabs">
       <a href="#rest" class="active" data-tab="rest" data-i18n="apiDocs.tab.rest">REST API (Swagger)</a>
       <a href="#sdk" data-tab="sdk" data-i18n="apiDocs.tab.sdk">SDK commands</a>
@@ -23,7 +23,7 @@
 
 <div id="sdk-panel" style="display:none">
   <div class="sdk-hero">
-    <h2 data-i18n="apiDocs.h2.embedIntro">Embed DocEditor via iframe + JS SDK</h2>
+    <h2 data-i18n="apiDocs.h2.embedIntro">Embed doc-editor via iframe + JS SDK</h2>
     <p>
       The <code>DocEditor</code> SDK creates an iframe hosting the editor in another
       origin (or same-origin) and exposes the commands listed below over
@@ -463,7 +463,7 @@ await api.restoreVersion(0);
 const spec = {
   openapi: "3.0.3",
   info: {
-    title: "DocEditor REST API",
+    title: "doc-editor REST API",
     version: "1.0.0",
     description: `\
 RESTful CRUD for documents, version history, and docx binaries.

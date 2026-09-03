@@ -56,8 +56,8 @@ import {
 import { openPdf, closePdf, isPdfMode, getPdfInfo } from "./pdf-view.js";
 import { t, applyI18n, getLocale, setLocale } from "./i18n.js";
 
-const LS_KEY = "word-editor:current-id";
-const LS_USER = "word-editor:user";
+const LS_KEY = "doc-editor:current-id";
+const LS_USER = "doc-editor:user";
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 // The LegalAI business token arrives in the URL fragment. Fragments are not

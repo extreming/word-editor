@@ -11,7 +11,9 @@
 // t(key) falls back to the English string, then to the key itself, so a
 // missing translation is visible/debuggable rather than silently blank.
 
-const LOCALE_KEY = "word-editor:locale";
+import './branding.js';
+
+const LOCALE_KEY = "doc-editor:locale";
 
 export const STRINGS = {
   en: {
@@ -177,7 +179,7 @@ export const STRINGS = {
     "home.hero.title": "Word and pdf Compatible Editor",
     "home.hero.body": "A full-featured rich-text editor that runs entirely in the browser — .docx import/export, real-time collaboration, track changes, comments, page layout, version history, and an embed SDK with REST API. Zero server dependencies.",
     "home.hero.tryDemo": "Try the demo ↓", "home.hero.openStandalone": "Open standalone editor",
-    "home.hero.downloadSdk": "Download SDK", "home.hero.starGithub": "★ Star on GitHub",
+    "home.hero.downloadSdk": "Download SDK", "home.hero.starGithub": "Upstream project",
     "home.demo.connecting": "connecting…", "home.demo.liveEditor": "Live editor", "home.demo.apiActions": "API actions",
     "home.demo.driveFromHere": "Drive the editor from here",
     "home.demo.insertParagraph": "Insert paragraph", "home.demo.center": "Center",
@@ -204,20 +206,20 @@ export const STRINGS = {
     "home.feat.binary.h": "⚡ Single binary", "home.feat.binary.p": "Zero-dependency Node.js server. No npm install, no database — just <code>node server.js</code> and it runs.",
     "home.links.apiRef": "API reference", "home.links.swagger": "Swagger — REST API", "home.links.sdkCommands": "SDK commands",
     "home.links.sdkDownload": "sdk.js (download)", "home.links.demos": "Demos", "home.links.demoHost": "Demo with host controls",
-    "home.links.standalone": "Standalone editor", "home.links.deployment": "Deployment", "home.links.githubRepo": "GitHub repository",
+    "home.links.standalone": "Standalone editor", "home.links.deployment": "Deployment", "home.links.githubRepo": "Upstream repository",
     "home.links.docker": "Docker:", "home.links.server": "Server", "home.links.healthCheck": "Health check",
     "home.links.nodePort": "Node.js · port 3001",
-    "home.footer.tagline": "DocEditor — built with vanilla JavaScript, zero dependencies",
-    "home.footer.viewGithub": "View on GitHub",
+    "home.footer.tagline": "doc-editor — built with vanilla JavaScript, zero dependencies",
+    "home.footer.viewGithub": "View upstream source",
     // ---- embed-example.html ----
-    "embedExample.title": "DocEditor SDK — embed example",
+    "embedExample.title": "doc-editor SDK — embed example",
     "embedExample.insertText": "Insert text", "embedExample.getContent": "Get content",
     "embedExample.setTitle": "Set title", "embedExample.save": "Save",
     "embedExample.viewMode": "View mode", "embedExample.editMode": "Edit mode",
     "home.demo.insertText": "Insert text",
     // ---- embed-demo.html ----
     "embedDemo.hostTitle": "Host app — controls",
-    "embedDemo.hostDesc": "Drives the embedded DocEditor via the JS SDK and postMessage API.",
+    "embedDemo.hostDesc": "Drives the embedded doc-editor via the JS SDK and postMessage API.",
     "embedDemo.group.document": "Document", "embedDemo.group.insert": "Insert",
     "embedDemo.getContent": "↩ Get content", "embedDemo.getText": "↩ Plain text", "embedDemo.getMeta": "↩ Meta",
     "embedDemo.save": "💾 Save", "embedDemo.new": "＋ New", "embedDemo.listDocs": "↩ List docs",
@@ -240,15 +242,15 @@ export const STRINGS = {
     "embedDemo.listVersions": "↩ List versions", "embedDemo.index": "Index", "embedDemo.restore": "Restore",
     "embedDemo.group.modeExport": "Mode & export",
     "embedDemo.edit": "Edit", "embedDemo.view": "View", "embedDemo.undo": "↩ Undo", "embedDemo.redo": "↩ Redo",
-    "embedDemo.embeddedTitle": "Embedded DocEditor", "embedDemo.notReady": "not ready",
+    "embedDemo.embeddedTitle": "Embedded doc-editor", "embedDemo.notReady": "not ready",
     // ---- api-docs.html ----
-    "apiDocs.title": "DocEditor API reference",
+    "apiDocs.title": "doc-editor API reference",
     "apiDocs.tab.rest": "REST API (Swagger)", "apiDocs.tab.sdk": "SDK commands", "apiDocs.tab.restclient": "REST client",
     "apiDocs.th.sdkMethod": "SDK method", "apiDocs.th.args": "Args", "apiDocs.th.returns": "Returns",
     "apiDocs.th.postMessageCmd": "postMessage cmd", "apiDocs.th.postMessageCall": "postMessage call",
     "apiDocs.th.description": "Description", "apiDocs.th.method": "Method", "apiDocs.th.restEndpoint": "REST endpoint",
     "apiDocs.th.option": "Option", "apiDocs.th.type": "Type", "apiDocs.th.default": "Default",
-    "apiDocs.h2.embedIntro": "Embed DocEditor via iframe + JS SDK",
+    "apiDocs.h2.embedIntro": "Embed doc-editor via iframe + JS SDK",
     "apiDocs.h2.contentMeta": "Content / meta",
     "apiDocs.h2.formattingExec": "Formatting (execCommand)",
     "apiDocs.h2.insertContent": "Insert content",
@@ -420,7 +422,7 @@ export const STRINGS = {
     "home.hero.title": "兼容 Word 与 PDF 的编辑器",
     "home.hero.body": "一款完全在浏览器中运行的全功能富文本编辑器——支持 .docx 导入/导出、实时协作、修订跟踪、批注、页面布局、版本历史，并提供带 REST API 的嵌入 SDK。零服务器端依赖。",
     "home.hero.tryDemo": "试用演示 ↓", "home.hero.openStandalone": "打开独立编辑器",
-    "home.hero.downloadSdk": "下载 SDK", "home.hero.starGithub": "★ 在 GitHub 上加星标",
+    "home.hero.downloadSdk": "下载 SDK", "home.hero.starGithub": "上游项目",
     "home.demo.connecting": "连接中…", "home.demo.liveEditor": "实时编辑器", "home.demo.apiActions": "API 操作",
     "home.demo.driveFromHere": "在此处驱动编辑器",
     "home.demo.insertParagraph": "插入段落", "home.demo.center": "居中",
@@ -447,20 +449,20 @@ export const STRINGS = {
     "home.feat.binary.h": "⚡ 单一可执行程序", "home.feat.binary.p": "零依赖 Node.js 服务器。无需 npm install，无需数据库——只需运行 <code>node server.js</code> 即可。",
     "home.links.apiRef": "API 参考", "home.links.swagger": "Swagger — REST API", "home.links.sdkCommands": "SDK 命令",
     "home.links.sdkDownload": "sdk.js（下载）", "home.links.demos": "演示", "home.links.demoHost": "带宿主控件的演示",
-    "home.links.standalone": "独立编辑器", "home.links.deployment": "部署", "home.links.githubRepo": "GitHub 仓库",
+    "home.links.standalone": "独立编辑器", "home.links.deployment": "部署", "home.links.githubRepo": "上游仓库",
     "home.links.docker": "Docker：", "home.links.server": "服务器", "home.links.healthCheck": "健康检查",
     "home.links.nodePort": "Node.js · 端口 3001",
-    "home.footer.tagline": "DocEditor —— 使用原生 JavaScript 构建，零依赖",
-    "home.footer.viewGithub": "在 GitHub 上查看",
+    "home.footer.tagline": "doc-editor —— 使用原生 JavaScript 构建，零依赖",
+    "home.footer.viewGithub": "查看上游源码",
     // ---- embed-example.html ----
-    "embedExample.title": "DocEditor SDK —— 嵌入示例",
+    "embedExample.title": "doc-editor SDK —— 嵌入示例",
     "embedExample.insertText": "插入文字", "embedExample.getContent": "获取内容",
     "embedExample.setTitle": "设置标题", "embedExample.save": "保存",
     "embedExample.viewMode": "查看模式", "embedExample.editMode": "编辑模式",
     "home.demo.insertText": "插入文字",
     // ---- embed-demo.html ----
     "embedDemo.hostTitle": "宿主应用 —— 控制面板",
-    "embedDemo.hostDesc": "通过 JS SDK 与 postMessage API 驱动嵌入的 DocEditor。",
+    "embedDemo.hostDesc": "通过 JS SDK 与 postMessage API 驱动嵌入的 doc-editor。",
     "embedDemo.group.document": "文档", "embedDemo.group.insert": "插入",
     "embedDemo.getContent": "↩ 获取内容", "embedDemo.getText": "↩ 纯文本", "embedDemo.getMeta": "↩ 元数据",
     "embedDemo.save": "💾 保存", "embedDemo.new": "＋ 新建", "embedDemo.listDocs": "↩ 列出文档",
@@ -483,15 +485,15 @@ export const STRINGS = {
     "embedDemo.listVersions": "↩ 列出版本", "embedDemo.index": "序号", "embedDemo.restore": "恢复",
     "embedDemo.group.modeExport": "模式与导出",
     "embedDemo.edit": "编辑", "embedDemo.view": "查看", "embedDemo.undo": "↩ 撤销", "embedDemo.redo": "↩ 重做",
-    "embedDemo.embeddedTitle": "嵌入的 DocEditor", "embedDemo.notReady": "未就绪",
+    "embedDemo.embeddedTitle": "嵌入的 doc-editor", "embedDemo.notReady": "未就绪",
     // ---- api-docs.html ----
-    "apiDocs.title": "DocEditor API 参考",
+    "apiDocs.title": "doc-editor API 参考",
     "apiDocs.tab.rest": "REST API（Swagger）", "apiDocs.tab.sdk": "SDK 命令", "apiDocs.tab.restclient": "REST 客户端",
     "apiDocs.th.sdkMethod": "SDK 方法", "apiDocs.th.args": "参数", "apiDocs.th.returns": "返回值",
     "apiDocs.th.postMessageCmd": "postMessage 命令", "apiDocs.th.postMessageCall": "postMessage 调用",
     "apiDocs.th.description": "说明", "apiDocs.th.method": "方法", "apiDocs.th.restEndpoint": "REST 接口",
     "apiDocs.th.option": "选项", "apiDocs.th.type": "类型", "apiDocs.th.default": "默认值",
-    "apiDocs.h2.embedIntro": "通过 iframe + JS SDK 嵌入 DocEditor",
+    "apiDocs.h2.embedIntro": "通过 iframe + JS SDK 嵌入 doc-editor",
     "apiDocs.h2.contentMeta": "内容／元数据",
     "apiDocs.h2.formattingExec": "格式（execCommand）",
     "apiDocs.h2.insertContent": "插入内容",

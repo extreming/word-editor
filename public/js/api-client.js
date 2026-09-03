@@ -48,7 +48,9 @@
 
     async _ensureDoc() {
       if (!this.docId) {
-        const doc = await this._json("POST", "/api/documents", { title: "Untitled" });
+        const doc = await this._json("POST", "/api/documents", {
+          title: "Untitled",
+        });
         this.docId = doc.id;
       }
       return this.docId;
@@ -56,7 +58,9 @@
 
     // ─── document management ───
     async createDocument(title) {
-      const doc = await this._json("POST", "/api/documents", { title: title || "Untitled" });
+      const doc = await this._json("POST", "/api/documents", {
+        title: title || "Untitled",
+      });
       this.docId = doc.id;
       return { ok: true, id: doc.id, rev: doc.rev };
     }
@@ -137,41 +141,88 @@
 
     // ─── formatting (operates on a provided HTML fragment) ───
     async format(cmd, value) {
-      throw new Error("format() requires a selected HTML fragment; use formatHtml(cmd, html, value) instead");
+      throw new Error(
+        "format() requires a selected HTML fragment; use formatHtml(cmd, html, value) instead",
+      );
     }
 
     async formatHtml(cmd, html, value) {
-      const data = await this._json("POST", "/api/format", { cmd, html, value });
+      const data = await this._json("POST", "/api/format", {
+        cmd,
+        html,
+        value,
+      });
       return { ok: true, html: data.html };
     }
 
-    async bold(html)        { return this.formatHtml("bold", html); }
-    async italic(html)      { return this.formatHtml("italic", html); }
-    async underline(html)   { return this.formatHtml("underline", html); }
-    async strikeThrough(html) { return this.formatHtml("strikeThrough", html); }
-    async subscript(html)   { return this.formatHtml("subscript", html); }
-    async superscript(html) { return this.formatHtml("superscript", html); }
-    async foreColor(color, html)    { return this.formatHtml("foreColor", html, color); }
-    async hiliteColor(color, html)  { return this.formatHtml("hiliteColor", html, color); }
-    async fontName(font, html)      { return this.formatHtml("fontName", html, font); }
-    async fontSize(size, html)      { return this.formatHtml("fontSize", html, size); }
-    async formatBlock(tag, html)    { return this.formatHtml("formatBlock", html, tag); }
-    async justifyLeft(html)   { return this.formatHtml("justifyLeft", html); }
-    async justifyCenter(html) { return this.formatHtml("justifyCenter", html); }
-    async justifyRight(html)  { return this.formatHtml("justifyRight", html); }
-    async justifyFull(html)   { return this.formatHtml("justifyFull", html); }
-    async insertOrderedList(html)   { return this.formatHtml("insertOrderedList", html); }
-    async insertUnorderedList(html) { return this.formatHtml("insertUnorderedList", html); }
+    async bold(html) {
+      return this.formatHtml("bold", html);
+    }
+    async italic(html) {
+      return this.formatHtml("italic", html);
+    }
+    async underline(html) {
+      return this.formatHtml("underline", html);
+    }
+    async strikeThrough(html) {
+      return this.formatHtml("strikeThrough", html);
+    }
+    async subscript(html) {
+      return this.formatHtml("subscript", html);
+    }
+    async superscript(html) {
+      return this.formatHtml("superscript", html);
+    }
+    async foreColor(color, html) {
+      return this.formatHtml("foreColor", html, color);
+    }
+    async hiliteColor(color, html) {
+      return this.formatHtml("hiliteColor", html, color);
+    }
+    async fontName(font, html) {
+      return this.formatHtml("fontName", html, font);
+    }
+    async fontSize(size, html) {
+      return this.formatHtml("fontSize", html, size);
+    }
+    async formatBlock(tag, html) {
+      return this.formatHtml("formatBlock", html, tag);
+    }
+    async justifyLeft(html) {
+      return this.formatHtml("justifyLeft", html);
+    }
+    async justifyCenter(html) {
+      return this.formatHtml("justifyCenter", html);
+    }
+    async justifyRight(html) {
+      return this.formatHtml("justifyRight", html);
+    }
+    async justifyFull(html) {
+      return this.formatHtml("justifyFull", html);
+    }
+    async insertOrderedList(html) {
+      return this.formatHtml("insertOrderedList", html);
+    }
+    async insertUnorderedList(html) {
+      return this.formatHtml("insertUnorderedList", html);
+    }
 
     // ─── insert helpers ───
     async insertImage(src, opts) {
-      const dims = opts ? ` width="${opts.width || ""}" height="${opts.height || ""}"` : "";
-      const alt = opts && opts.alt ? ` alt="${opts.alt.replace(/"/g, "&quot;")}"` : "";
-      return this.insertHtml(`<img src="${src.replace(/"/g, "&quot;")}"${alt}${dims}>`);
+      const dims = opts
+        ? ` width="${opts.width || ""}" height="${opts.height || ""}"`
+        : "";
+      const alt =
+        opts && opts.alt ? ` alt="${opts.alt.replace(/"/g, "&quot;")}"` : "";
+      return this.insertHtml(
+        `<img src="${src.replace(/"/g, "&quot;")}"${alt}${dims}>`,
+      );
     }
 
     async insertLink(href, text) {
-      return this.insertHtml(`<a href="${href.replace(/"/g, "&quot;")}">${(text || href).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c])}</a>`);
+      return this.insertHtml(
+        `<a href="${href.replace(/"/g, "&quot;")}">${(text || href).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c])}</a>`,
+      );
     }
 
     async insertTable(rows, cols) {
@@ -196,7 +247,9 @@
     }
 
     async insertBlankPage() {
-      return this.insertHtml('<p class="page-break"><br></p><p><br></p><p class="page-break"><br></p><p><br></p>');
+      return this.insertHtml(
+        '<p class="page-break"><br></p><p><br></p><p class="page-break"><br></p><p><br></p>',
+      );
     }
 
     async insertHr() {
@@ -206,7 +259,10 @@
     // ─── comments ───
     async addComment(text, author) {
       const id = await this._ensureDoc();
-      const data = await this._json("POST", `/api/documents/${id}/comments`, { text, author });
+      const data = await this._json("POST", `/api/documents/${id}/comments`, {
+        text,
+        author,
+      });
       return { id: data.id };
     }
 
@@ -218,7 +274,11 @@
     // ─── track changes ───
     async setTrackChanges(on) {
       const id = await this._ensureDoc();
-      const data = await this._json("PUT", `/api/documents/${id}/track-changes`, { enabled: on });
+      const data = await this._json(
+        "PUT",
+        `/api/documents/${id}/track-changes`,
+        { enabled: on },
+      );
       return { ok: true, on: data.enabled };
     }
 
@@ -229,42 +289,60 @@
     }
 
     async acceptAllChanges() {
-      throw new Error("acceptAllChanges requires the embed SDK (needs browser DOM)");
+      throw new Error(
+        "acceptAllChanges requires the embed SDK (needs browser DOM)",
+      );
     }
 
     async rejectAllChanges() {
-      throw new Error("rejectAllChanges requires the embed SDK (needs browser DOM)");
+      throw new Error(
+        "rejectAllChanges requires the embed SDK (needs browser DOM)",
+      );
     }
 
     // ─── headers / footers / page numbers ───
     async setHeader(text, align) {
       const ps = await this.getPageSetup();
-      const ch = ps.pageSetup && ps.pageSetup.chrome || {};
+      const ch = (ps.pageSetup && ps.pageSetup.chrome) || {};
       if (text) ch.header = { text, align: align || "center" };
       else delete ch.header;
-      return this._json("PUT", `/api/documents/${this.docId}/page-setup`, { pageSetup: { ...ps.pageSetup, chrome: ch } });
+      return this._json("PUT", `/api/documents/${this.docId}/page-setup`, {
+        pageSetup: { ...ps.pageSetup, chrome: ch },
+      });
     }
 
     async setFooter(text, align) {
       const ps = await this.getPageSetup();
-      const ch = ps.pageSetup && ps.pageSetup.chrome || {};
+      const ch = (ps.pageSetup && ps.pageSetup.chrome) || {};
       if (text) ch.footer = { text, align: align || "center" };
       else delete ch.footer;
-      return this._json("PUT", `/api/documents/${this.docId}/page-setup`, { pageSetup: { ...ps.pageSetup, chrome: ch } });
+      return this._json("PUT", `/api/documents/${this.docId}/page-setup`, {
+        pageSetup: { ...ps.pageSetup, chrome: ch },
+      });
     }
 
     async setPageNumbers(opts) {
       const ps = await this.getPageSetup();
-      const ch = ps.pageSetup && ps.pageSetup.chrome || {};
+      const ch = (ps.pageSetup && ps.pageSetup.chrome) || {};
       if (opts && opts.enabled === false) delete ch.pageNumber;
-      else ch.pageNumber = { enabled: true, format: (opts && opts.format) || "arabic", place: (opts && opts.place) || "footer-center" };
-      return this._json("PUT", `/api/documents/${this.docId}/page-setup`, { pageSetup: { ...ps.pageSetup, chrome: ch } });
+      else
+        ch.pageNumber = {
+          enabled: true,
+          format: (opts && opts.format) || "arabic",
+          place: (opts && opts.place) || "footer-center",
+        };
+      return this._json("PUT", `/api/documents/${this.docId}/page-setup`, {
+        pageSetup: { ...ps.pageSetup, chrome: ch },
+      });
     }
 
     // ─── page setup / zoom ───
     async setPageSetup(o) {
       const id = await this._ensureDoc();
-      await this._json("PUT", `/api/documents/${id}/page-setup`, { pageSetup: o, ...o });
+      await this._json("PUT", `/api/documents/${id}/page-setup`, {
+        pageSetup: o,
+        ...o,
+      });
       return { ok: true, pageSetup: (await this.getPageSetup()).pageSetup };
     }
 
@@ -291,7 +369,9 @@
 
     async restoreVersion(index) {
       const id = await this._ensureDoc();
-      const data = await this._json("POST", `/api/documents/${id}/restore`, { index });
+      const data = await this._json("POST", `/api/documents/${id}/restore`, {
+        index,
+      });
       return { ok: true, rev: data.rev };
     }
 
@@ -299,10 +379,16 @@
     async find(query, opts) {
       const content = await this.getContent();
       const html = content.html || "";
-      const text = html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
-      const flags = (opts && opts.matchCase) ? "g" : "gi";
+      const text = html
+        .replace(/<[^>]*>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&");
+      const flags = opts && opts.matchCase ? "g" : "gi";
       const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = opts && opts.regex ? new RegExp(query, flags) : new RegExp(escaped, flags);
+      const re =
+        opts && opts.regex
+          ? new RegExp(query, flags)
+          : new RegExp(escaped, flags);
       const matches = [];
       let m;
       while ((m = re.exec(text)) !== null) {
@@ -316,20 +402,31 @@
       const id = await this._ensureDoc();
       const content = await this.getContent();
       const html = content.html || "";
-      const flags = (opts && opts.matchCase) ? "g" : "gi";
+      const flags = opts && opts.matchCase ? "g" : "gi";
       const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = opts && opts.regex ? new RegExp(query, flags) : new RegExp(escaped, "g");
-      const replaced = html.replace(re, (match) => replacement.replace(/\$&/g, match));
-      await this._json("PUT", `/api/documents/${id}/content`, { html: replaced });
+      const re =
+        opts && opts.regex
+          ? new RegExp(query, flags)
+          : new RegExp(escaped, "g");
+      const replaced = html.replace(re, (match) =>
+        replacement.replace(/\$&/g, match),
+      );
+      await this._json("PUT", `/api/documents/${id}/content`, {
+        html: replaced,
+      });
       return { replaced: true };
     }
 
     // ─── export ───
     async exportDoc(fmt) {
       const id = await this._ensureDoc();
-      const res = await fetch(`${this.baseUrl}/api/documents/${id}/export?fmt=${encodeURIComponent(fmt)}`);
+      const res = await fetch(
+        `${this.baseUrl}/api/documents/${id}/export?fmt=${encodeURIComponent(fmt)}`,
+      );
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        const err = await res
+          .json()
+          .catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(err.error);
       }
       const blob = await res.blob();
@@ -342,7 +439,9 @@
     }
 
     async previewPrint() {
-      throw new Error("previewPrint requires a browser; use exportDoc('pdf') for server-side");
+      throw new Error(
+        "previewPrint requires a browser; use exportDoc('pdf') for server-side",
+      );
     }
 
     // ─── lifecycle ───

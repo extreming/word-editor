@@ -1,14 +1,14 @@
 services:
-  word-editor:
+  doc-editor:
     build: .
-    image: word-editor
-    container_name: word-editor
+    image: doc-editor
+    container_name: doc-editor
 
     ports:
       - "127.0.0.1:3001:3001"
 
     volumes:
-      - /home/aiadmin/word-editor/data:/app/data:Z
+      - ${HOST_DATA_DIR:-./data}:/app/data
       - /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/etc/ssl/certs/host-ca-bundle.crt:ro
 
     environment:
@@ -16,15 +16,13 @@ services:
       PORT: "3001"
       DATA_DIR: "/app/data"
       STORAGE_DRIVER: "local"
-      SOFFICE_PATH: "/usr/bin/soffice"
       NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/host-ca-bundle.crt"
-      # Host business-system integration. Replace these values for each project.
-      TOKEN_SECRET: "4245afd2abbfdcdb4e960bcee70389902b47f1e0ca0d11fc992dc61ad4da293b"
-      BUSINESS_API_BASE_URL: "https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai"
-      BUSINESS_DOCUMENT_CONTENT_PATH: "/doc-editor/{docId}/content"
-      BUSINESS_TOKEN_HEADER: "token"
+      TOKEN_SECRET: "${TOKEN_SECRET:?Set TOKEN_SECRET in .env}"
+      BUSINESS_API_BASE_URL: "${BUSINESS_API_BASE_URL:?Set the business API URL}"
+      BUSINESS_DOCUMENT_CONTENT_PATH: "${BUSINESS_DOCUMENT_CONTENT_PATH:?Set the business content path}"
+      BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-X-Editor-Token}"
       BUSINESS_REQUEST_TIMEOUT_MS: "30000"
-      # Draft autosave remains enabled inside word-editor. This switch only
+      # Draft autosave remains enabled inside doc-editor. This switch only
       # controls periodic publication of the complete DOCX to the business system.
       BUSINESS_AUTO_COMMIT_ENABLED: "false"
       BUSINESS_AUTO_COMMIT_INTERVAL_MS: "300000"
