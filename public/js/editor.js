@@ -282,7 +282,8 @@ const ALLOWED = {
   ins: ["data-author", "data-ts"], del: ["data-author", "data-ts"],
   sub: [], sup: [], mark: [], code: [], kbd: [], samp: [], tt: [], pre: [],
   h1: [], h2: [], h3: [], h4: [], h5: [], h6: [], blockquote: [],
-  ul: [], ol: ["start"], li: [],
+  ul: ["data-ooxml-numbering", "data-ooxml-num-id", "data-ooxml-level"],
+  ol: ["start", "data-ooxml-numbering", "data-ooxml-num-id", "data-ooxml-level"], li: [],
   table: [], thead: [], tbody: [], tfoot: [], tr: [],
   td: ["colspan", "rowspan"], th: ["colspan", "rowspan"],
   a: ["href"], img: ["src", "width", "height", "alt"],
@@ -290,7 +291,7 @@ const ALLOWED = {
 };
 const ALLOWED_STYLES = new Set([
   "color", "background-color", "font-size", "font-family", "font-weight", "font-style",
-  "text-decoration", "text-decoration-line", "text-align", "text-indent",
+  "text-decoration", "text-decoration-line", "text-align", "text-indent", "white-space", "list-style-type",
   "line-height", "vertical-align", "width", "height", "max-width", "table-layout",
   // image editing + shapes
   "border", "border-width", "border-style", "border-color", "border-top", "border-radius",

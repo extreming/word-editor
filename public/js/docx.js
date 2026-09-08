@@ -308,7 +308,7 @@ function parseRels(files, relPath) {
 }
 
 function parseNumbering(files) {
-  // numId -> { ilvl -> { fmt, start } }
+  // Keep the level template and original XML as well as the counter format.
   const text = decodePart(files, "word/numbering.xml");
   const fmtByNum = new Map();
   if (!text) return fmtByNum;
@@ -319,12 +319,7 @@ function parseNumbering(files) {
     const levels = {};
     for (const lvl of children(ab, W, "lvl")) {
       const ilvl = lvl.getAttributeNS(W, "ilvl") ?? lvl.getAttribute("w:ilvl");
-      const numFmt = child(lvl, W, "numFmt");
-      const start = child(lvl, W, "start");
-      levels[ilvl] = {
-        fmt: numFmt ? attr(numFmt, "val") : "decimal",
-        start: start ? parseInt(attr(start, "val"), 10) || 1 : 1,
-      };
+      levels[ilvl] = numberingLevel(lvl);
     }
     abstracts.set(id, levels);
   }
@@ -337,6 +332,8 @@ function parseNumbering(files) {
     for (const override of children(num, W, "lvlOverride")) {
       const ilvl = override.getAttributeNS(W, "ilvl") ?? override.getAttribute("w:ilvl");
       const startOverride = child(override, W, "startOverride");
+      const overrideLevel = child(override, W, "lvl");
+      if (overrideLevel) levels[ilvl] = numberingLevel(overrideLevel);
       if (startOverride) {
         levels[ilvl] = levels[ilvl] || { fmt: "decimal", start: 1 };
         levels[ilvl].start = parseInt(attr(startOverride, "val"), 10) || 1;
@@ -345,6 +342,95 @@ function parseNumbering(files) {
     fmtByNum.set(numId, levels);
   }
   return fmtByNum;
+}
+
+function numberingLevel(lvl) {
+  const value = (name) => { const el = child(lvl, W, name); return el ? attr(el, "val") : null; };
+  const start = Number(value("start"));
+  return {
+    fmt: value("numFmt") || "decimal", start: Number.isFinite(start) && value("start") != null ? start : 1,
+    text: value("lvlText") ?? `%${Number(attr(lvl, "ilvl")) + 1}.`,
+    legal: boolProp(child(lvl, W, "isLgl")), suffix: value("suff") || "tab",
+    restart: value("lvlRestart") == null ? null : Number(value("lvlRestart")),
+    xml: serializeXmlNode(lvl),
+  };
+}
+
+function formatListNumber(value, fmt) {
+  if (fmt === "chineseCounting" || fmt === "chineseCountingThousand") {
+    if (value === 0) return "零";
+    if (value > 0 && value < 10000) {
+      const digits = "零一二三四五六七八九", units = ["", "十", "百", "千"];
+      let result = "", zero = false;
+      for (let power = 3; power >= 0; power--) {
+        const digit = Math.floor(value / 10 ** power) % 10;
+        if (digit) {
+          if (zero) result += "零";
+          result += (digit === 1 && power === 1 && !result ? "" : digits[digit]) + units[power];
+          zero = false;
+        } else if (result && value % 10 ** power) zero = true;
+      }
+      return result;
+    }
+  }
+  if (fmt === "upperLetter" || fmt === "lowerLetter") {
+    let n = value, result = "";
+    while (n > 0) { n--; result = String.fromCharCode(65 + n % 26) + result; n = Math.floor(n / 26); }
+    return fmt === "lowerLetter" ? result.toLowerCase() : result;
+  }
+  if ((fmt === "upperRoman" || fmt === "lowerRoman") && value > 0 && value < 4000) {
+    let n = value, result = "";
+    for (const [amount, symbol] of [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]]) {
+      while (n >= amount) { result += symbol; n -= amount; }
+    }
+    return fmt === "lowerRoman" ? result.toLowerCase() : result;
+  }
+  return fmt === "decimalZero" ? String(value).padStart(2, "0") : String(value);
+}
+
+function readListDefinition(list) {
+  try {
+    const levels = JSON.parse(base64ToUtf8(list.getAttribute("data-ooxml-numbering") || ""));
+    if (!levels || typeof levels !== "object" || Array.isArray(levels)) return null;
+    for (const [key, level] of Object.entries(levels)) {
+      if (!/^[0-8]$/.test(key) || !level || typeof level.text !== "string"
+          || !Number.isSafeInteger(level.start) || typeof level.xml !== "string") return null;
+    }
+    return levels;
+  } catch { return null; }
+}
+
+// Use native list markers, so numbering is not editable body text. Recompute
+// after edits and reloads; split lists with the same numId share their counters.
+export function refreshDocxNumbering(root) {
+  const groups = new Map(), definitions = new Map();
+  for (const li of root.querySelectorAll("li")) {
+    if (li.closest("[data-pg-flow], [data-pg-row]")) continue;
+    const list = li.parentElement;
+    const encoded = list.getAttribute("data-ooxml-numbering");
+    if (!encoded) continue;
+    if (!definitions.has(encoded)) definitions.set(encoded, readListDefinition(list));
+    const levels = definitions.get(encoded);
+    const ilvl = Number(list.getAttribute("data-ooxml-level"));
+    if (!levels || !levels[ilvl]) continue;
+    const key = `${list.getAttribute("data-ooxml-num-id")}:${encoded}`;
+    if (!groups.has(key)) groups.set(key, new Map());
+    const counters = groups.get(key), level = levels[ilvl];
+    // Imported ol[start] is only a snapshot for split HTML lists. The Word
+    // definition owns the start value, including after earlier items are deleted.
+    counters.set(ilvl, counters.has(ilvl) ? counters.get(ilvl) + 1 : level.start);
+    for (const index of [...counters.keys()]) {
+      const restart = levels[index]?.restart;
+      if (index > ilvl && restart !== 0 && (restart == null || ilvl < restart)) counters.delete(index);
+    }
+    const label = level.text.replace(/%([1-9])/g, (_, ref) => {
+      const index = Number(ref) - 1, referenced = levels[index];
+      return formatListNumber(counters.get(index) ?? referenced?.start ?? 1, level.legal ? "decimal" : referenced?.fmt);
+    });
+    // CSS strings need CSS escaping, then the DOM handles HTML escaping.
+    li.style.listStyleType = '"' + (label + (level.suffix === "nothing" ? "" : " "))
+      .replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n\f]/g, " ") + '"';
+  }
 }
 
 // styles.xml: styleId -> {numId, ilvl} for styles that carry their own numbering
@@ -828,7 +914,12 @@ function runToHtml(r, ctx) {
   for (const seg of segs) {
     if (seg.raw !== undefined) { out += seg.raw; continue; }
     if (seg.br) { out += "<br>"; continue; }
-    out += open + escHtml(seg.t).replace(/\t/g, "&nbsp;&nbsp;&nbsp;&nbsp;") + close;
+    let text = escHtml(seg.t).replace(/\t/g, "&nbsp;&nbsp;&nbsp;&nbsp;");
+    // Word keeps leading/trailing and repeated spaces (including underlined
+    // form blanks). HTML's default whitespace handling collapses them. Keep
+    // the original characters for editing/export, while still allowing wraps.
+    if (/^ | $| {2}/.test(seg.t)) text = `<span style="white-space:pre-wrap">${text}</span>`;
+    out += open + text + close;
   }
   return { html: out, pageBreak, deferred };
 }
@@ -1283,11 +1374,15 @@ export async function importDocx(fileOrBuffer) {
     if (node.localName === "p") {
       const info = paragraphStyleInfo(node, ctx);
       if (info.numId != null && ctx.numFmt.has(info.numId)) {
-        const level = (ctx.numFmt.get(info.numId) || {})[String(info.ilvl)] || { fmt: "decimal", start: 1 };
+        const levels = ctx.numFmt.get(info.numId) || {};
+        const level = levels[String(info.ilvl)] || { fmt: "decimal", start: 1 };
+        const custom = Object.entries(levels).some(([index, l]) => l.fmt !== "bullet"
+          && (l.fmt !== "decimal" || l.text !== `%${Number(index) + 1}.`));
         const inner = inlineToHtml(node, ctx);
         items.push({
           li: true, ilvl: Math.min(info.ilvl, 8), numId: info.numId,
           ordinal: nextListOrdinal(info.numId, info.ilvl, level.start),
+          definition: custom ? utf8ToBase64(JSON.stringify(levels)) : null,
           tag: level.fmt === "bullet" ? "ul" : "ol", html: inner.html || "<br>",
         });
       } else if (info.listTag) {
@@ -1321,12 +1416,20 @@ export async function importDocx(fileOrBuffer) {
     while (stack.length < item.ilvl + 1) {
       const atItemLevel = stack.length === item.ilvl;
       const start = atItemLevel && item.tag === "ol" && item.ordinal > 1 ? ` start="${item.ordinal}"` : "";
-      html += `<${item.tag}${start}>`;
+      const definition = item.definition ? ` data-ooxml-numbering="${item.definition}" data-ooxml-num-id="${escXml(item.numId)}" data-ooxml-level="${stack.length}"` : "";
+      html += `<${item.tag}${start}${definition}>`;
       stack.push({ tag: item.tag, numId: item.numId });
     }
     html += `<li>${item.html}</li>`;
   }
   while (stack.length) closeOne();
+
+  if (html.includes("data-ooxml-numbering")) {
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    refreshDocxNumbering(container);
+    html = container.innerHTML;
+  }
 
   // document title from core.xml
   let title = null;
@@ -1661,6 +1764,36 @@ function paragraphToXml(el, ctx, extraPPr = []) {
 
 function listToXml(listEl, ctx, ilvl, numId) {
   const tag = listEl.tagName.toLowerCase();
+  const definition = readListDefinition(listEl);
+  if (definition) {
+    const level = Number(listEl.getAttribute("data-ooxml-level"));
+    if (Number.isInteger(level) && level >= 0 && level <= 8) ilvl = level;
+    ctx.importedNumbering ||= new Map();
+    const key = `${listEl.getAttribute("data-ooxml-num-id")}:${listEl.getAttribute("data-ooxml-numbering")}`;
+    if (!ctx.importedNumbering.has(key)) {
+      // Only accept Word level elements from the stored definition. Do not
+      // interpolate arbitrary markup from pasted HTML into numbering.xml.
+      const levels = [];
+      for (const [index, item] of Object.entries(definition)) {
+        try {
+          if (/<!DOCTYPE|<\?xml/i.test(item.xml)) continue;
+          const el = parseXml(item.xml).documentElement;
+          if (el.namespaceURI !== W || el.localName !== "lvl") continue;
+          el.setAttributeNS(W, "w:ilvl", index);
+          let start = child(el, W, "start");
+          if (!start) { start = el.ownerDocument.createElementNS(W, "w:start"); el.insertBefore(start, el.firstChild); }
+          start.setAttributeNS(W, "w:val", String(item.start));
+          levels.push(serializeXmlNode(el));
+        } catch { /* Malformed pasted metadata falls back to normal lists. */ }
+      }
+      if (levels.length) {
+        const id = ctx.nextNumId++;
+        ctx.nums.push({ numId: id, abstract: id, levelsXml: levels.join("") });
+        ctx.importedNumbering.set(key, id);
+      }
+    }
+    numId = ctx.importedNumbering.get(key) ?? numId;
+  }
   if (numId == null) {
     if (tag === "ol") {
       numId = ctx.nextNumId++;
@@ -2034,8 +2167,10 @@ function numberingXml(ctx) {
     const fmt = l % 3 === 0 ? "decimal" : l % 3 === 1 ? "lowerLetter" : "lowerRoman";
     decimalLvls += `<w:lvl w:ilvl="${l}"><w:start w:val="1"/><w:numFmt w:val="${fmt}"/><w:lvlText w:val="%${l + 1}."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${ind}" w:hanging="360"/></w:pPr></w:lvl>`;
   }
+  let customAbstracts = "";
   let nums = `<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>`;
   for (const n of ctx.nums) {
+    if (n.levelsXml) customAbstracts += `<w:abstractNum w:abstractNumId="${n.abstract}"><w:multiLevelType w:val="multilevel"/>${n.levelsXml}</w:abstractNum>`;
     const startOverride = n.start > 1
       ? `<w:lvlOverride w:ilvl="${n.ilvl || 0}"><w:startOverride w:val="${n.start}"/></w:lvlOverride>` : "";
     nums += `<w:num w:numId="${n.numId}"><w:abstractNumId w:val="${n.abstract}"/>${startOverride}</w:num>`;
@@ -2044,7 +2179,7 @@ function numberingXml(ctx) {
     `<w:numbering xmlns:w="${W}">` +
     `<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/>${bulletLvls}</w:abstractNum>` +
     `<w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/>${decimalLvls}</w:abstractNum>` +
-    nums +
+    customAbstracts + nums +
     `</w:numbering>`;
 }
 

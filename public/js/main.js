@@ -31,6 +31,7 @@ import {
 import { History } from "./history.js";
 import {
   importDocx,
+  refreshDocxNumbering,
   supportsDocx,
   DEFAULT_PAGE_SETUP,
   htmlToPlainText,
@@ -173,6 +174,7 @@ async function main() {
     clearTablePagination(clone);
     for (const spacer of clone.querySelectorAll("[data-pg-flow]"))
       spacer.remove();
+    refreshDocxNumbering(clone);
     for (const el of clone.querySelectorAll("[data-pg]"))
       clearPaginationOffset(el);
     for (const el of clone.querySelectorAll(".comment-ref.active"))
@@ -983,6 +985,7 @@ async function main() {
   function setEditorContent(html) {
     selectionHighlight.clearHighlight();
     editor.innerHTML = html && html.trim() ? sanitizeHtml(html) : "<p><br></p>";
+    refreshDocxNumbering(editor);
     if (editHistory) editHistory.reset();
     updateWordCount();
     schedulePaginate();
@@ -1604,6 +1607,7 @@ async function main() {
 
   let wcTimer = null;
   editor.addEventListener("input", () => {
+    refreshDocxNumbering(editor);
     scheduleSave();
     schedulePaginate();
     clearTimeout(wcTimer);
