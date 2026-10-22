@@ -20,13 +20,28 @@ COPY server.js ./
 COPY server ./server
 COPY public ./public
 
-# Persist editor working data by mounting /app/data. LegalAI remains the
-# system of record for formally committed business documents.
-RUN mkdir -p /app/data
+# 运维在构建前修改配置；修改后重新 build 并重建容器。
+# TOKEN_SECRET 与业务系统签发 editor token 时使用的密钥一致。
+ENV TOKEN_SECRET=a03de03549caabcae672b5f15af1788205fe6d4d60aae541daa860da84996bee \
+    BUSINESS_API_BASE_URL=https//legalai-backend:8080 \
+    BUSINESS_DOCUMENT_CONTENT_PATH=/doc-editor/legalai/content \
+    BUSINESS_TOKEN_HEADER=token
 
-ENV HOST=0.0.0.0
-ENV PORT=3001
-ENV DATA_DIR=/app/data
+# 工作文件保存在容器内，由应用自动创建目录，不需要宿主机目录或数据卷。
+# 启动时不主动清空草稿；删除并重建容器会丢失工作文件。
+ENV HOST=0.0.0.0 \
+    PORT=3001 \
+    DATA_DIR=/app/data \
+    BUSINESS_REQUEST_TIMEOUT_MS=30000 \
+    BUSINESS_AUTO_COMMIT_ENABLED=false \
+    BUSINESS_AUTO_COMMIT_INTERVAL_MS=300000 \
+    VERSION_HISTORY_ENABLED=false \
+    STARTUP_DRAFT_PURGE_ENABLED=false \
+    DATA_RETENTION_HOURS=24 \
+    DATA_CLEANUP_INTERVAL_MS=86400000 \
+    DISK_CHECK_INTERVAL_MS=300000 \
+    DISK_WARNING_PERCENT=70 \
+    DISK_CRITICAL_PERCENT=85
 
 EXPOSE 3001
 

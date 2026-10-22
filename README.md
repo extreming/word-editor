@@ -66,9 +66,15 @@ is later redesigned around many state-driven components.
 
 ```bash
 docker build -t doc-editor .
-docker run -d --name doc-editor -p 3001:3001 -v doc-editor-data:/app/data doc-editor
+docker run -d --name doc-editor --restart unless-stopped -p 3001:3001 doc-editor
 # or: docker compose up -d --build
 ```
+
+For third-party source delivery, edit the root Dockerfile's ENV values before
+building. Working files live inside the container at /app/data; restarting the
+same container retains them, while removing and recreating it discards them.
+This Dockerfile disables startup draft purging; normal close/retention cleanup
+still applies. See [source deployment instructions](deployment-source/README.md).
 
 Before using the checked-in Compose file, configure its host data and CA-bundle
 mounts, business API address, and signing secret for the target environment.
