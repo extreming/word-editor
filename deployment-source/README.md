@@ -22,23 +22,35 @@ doc-editor-source/
 
 不交付 `.env`、业务数据、node_modules、Git 历史、IDE 配置、旧镜像 tar、旧部署 ZIP 或 Compose 文件。Dockerfile 已在源码包根目录，无需额外寻找其他版本。
 
-## 修改环境变量
+## 默认配置与自动密钥
 
-解压后修改根目录 `Dockerfile` 的 `ENV`：
+本包与业务后端一起交付，Dockerfile 已配置以下固定值，部署方无需修改即可构建运行：
+
+```text
+BUSINESS_API_BASE_URL=http://legalai-backend:8080
+BUSINESS_DOCUMENT_CONTENT_PATH=/doc-editor/legalai/content
+BUSINESS_TOKEN_HEADER=token
+```
+
+编辑器容器须能通过 `legalai-backend:8080` 访问同批部署的后端；如分开使用 `docker run` 部署，应将两个容器接入同一自定义 Docker 网络，并为后端设置 `legalai-backend` 网络别名。环境或拓扑有变化时可通过 `docker run -e` 覆盖配置。
+
+无需生成或填写 `TOKEN_SECRET`。服务首次启动会自动生成 32 字节随机密钥，写入 `/app/data/.token-secret`（Linux 文件权限 0600）。同一容器重启时复用，文档清理不会删除此文件；删除并重建无数据卷容器时会生成新密钥，用户需要重新打开文档。该密钥仅用于编辑器内部短期文档令牌，不需要与业务后端共享，也不会写入镜像。
+
+可选配置说明：
 
 | 变量 | 配置要求 |
 | --- | --- |
-| `TOKEN_SECRET` | 改为本环境随机密钥，可用 `openssl rand -hex 32` 生成；与业务系统签发 editor token 的密钥一致 |
-| `BUSINESS_API_BASE_URL` | 容器可访问的业务后端地址，如 `https://api.example.com`；localhost 指容器自身 |
-| `BUSINESS_DOCUMENT_CONTENT_PATH` | 实际文档读取接口路径，默认 `/doc-editor/{docId}/content`，保留 `{docId}` 占位符 |
-| `BUSINESS_TOKEN_HEADER` | 按业务接口约定配置，默认 `token` |
+| `TOKEN_SECRET` | 可选运行时覆盖；默认自动生成并保存。多实例需统一密钥，但仍需另行处理共享存储、会话及 WebSocket 路由 |
+| `BUSINESS_API_BASE_URL` | 本包固定为 `http://legalai-backend:8080` |
+| `BUSINESS_DOCUMENT_CONTENT_PATH` | 本包固定为 `/doc-editor/legalai/content` |
+| `BUSINESS_TOKEN_HEADER` | 本包固定为 `token` |
 | `BUSINESS_REQUEST_TIMEOUT_MS` | 业务接口超时，默认 30000 毫秒 |
 | `BUSINESS_AUTO_COMMIT_ENABLED` | 默认 false，不启用定时向业务系统发布完整 DOCX |
 | `VERSION_HISTORY_ENABLED` | 默认 false，关闭内部版本历史 |
 | `STARTUP_DRAFT_PURGE_ENABLED` | 默认 false，不因服务启动而主动清理草稿 |
 | `DATA_DIR` | 默认 `/app/data`，容器内工作目录，由应用自动创建 |
 
-其他 ENV 为清理周期和磁盘监控配置，通常保持默认即可。ENV 中的密钥可被持有镜像的人查看，应由第三方自行填写并将构建后的镜像按含密钥的制品管理。
+其他 ENV 为清理周期和磁盘监控配置，通常保持默认即可。密钥文件不可读、不可写或内容损坏时服务启动失败，不会静默更换密钥；请恢复文件或显式设置运行时 `TOKEN_SECRET`。
 
 ## 构建和运行
 
@@ -49,9 +61,9 @@ doc-editor-source/
 sha256sum -c doc-editor-source-实际时间.zip.sha256
 unzip doc-editor-source-实际时间.zip
 cd doc-editor-source
-# 在此编辑 Dockerfile 中的 ENV
 docker build -t doc-editor:local .
-docker run -d --name doc-editor --restart unless-stopped -p 3001:3001 doc-editor:local
+# legalai-network 为示例：替换为业务后端已加入的自定义 Docker 网络名称。
+docker run -d --name doc-editor --network legalai-network --restart unless-stopped -p 3001:3001 doc-editor:local
 docker logs --tail 100 doc-editor
 curl -f http://127.0.0.1:3001/api/health
 ```
@@ -69,7 +81,7 @@ docker build -t doc-editor:local .
 # 首次部署无需执行 stop 和 rm；已有同名容器时执行。
 docker stop doc-editor
 docker rm doc-editor
-docker run -d --name doc-editor --restart unless-stopped -p 3001:3001 doc-editor:local
+docker run -d --name doc-editor --network legalai-network --restart unless-stopped -p 3001:3001 doc-editor:local
 ```
 
 仅执行 `docker restart` 不会加载重新构建的镜像或新配置。

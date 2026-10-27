@@ -17,7 +17,7 @@ foreach ($directory in @('server', 'public')) {
         $entries[$relative] = $file.FullName
     }
 }
-foreach ($required in @('server/storage.js', 'server/dataLifecycle.js', 'server/scopedAuth.js', 'server/docConvert.js', 'server/docxNode.mjs', 'public/package.json', 'public/editor.html', 'public/js/main.js', 'public/js/editor.js', 'public/js/docx.js', 'public/js/sdk.js')) {
+foreach ($required in @('server/storage.js', 'server/dataLifecycle.js', 'server/scopedAuth.js', 'server/tokenSecret.js', 'server/docConvert.js', 'server/docxNode.mjs', 'public/package.json', 'public/editor.html', 'public/js/main.js', 'public/js/editor.js', 'public/js/docx.js', 'public/js/sdk.js')) {
     if (-not $entries.Contains($required)) { throw "Missing required source: $required" }
 }
 $entries['DEPLOYMENT.md'] = Join-Path $PSScriptRoot 'README.md'

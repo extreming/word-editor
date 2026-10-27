@@ -281,7 +281,7 @@ REST helper endpoint has the same concurrency guard or browser review behavior.
 |---|---|---|
 | `PORT` / `HOST` | `3001` / `127.0.0.1` | listen address |
 | `DATA_DIR` | `./data` | local working directory for drafts, versions, and generated DOCX files |
-| `TOKEN_SECRET` | required for LegalAI | HMAC signing key for the short-lived document token issued by the LegalAI session endpoint |
+| `TOKEN_SECRET` | auto-generated | Optional override for the editor's HMAC signing key; otherwise generated and reused at `DATA_DIR/.token-secret`. Losing or changing the key invalidates existing document tokens. No backend key sharing is required. |
 | `SOFFICE_PATH` | `soffice` (PATH lookup) | path to the LibreOffice binary used for legacy `.doc`/`.dot` conversion |
 | `BUSINESS_API_BASE_URL` | unset | host business-system API base URL |
 | `BUSINESS_DOCUMENT_CONTENT_PATH` | `/doc-editor/{docId}/content` | host endpoint used to download and publish a business document |

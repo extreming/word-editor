@@ -7,7 +7,7 @@
 第三方业务系统需要完成三项工作：
 
 1. **后端提供文件接口**：同一路径支持 GET 下载原文和 POST 接收编辑后的 DOCX，见第 2 节。
-2. **部署编辑器服务**：配置业务接口地址、签名密钥、数据目录及 HTTPS/iframe 访问策略，见第 3、4 节。
+2. **部署编辑器服务**：配置业务接口地址、数据目录及 HTTPS/iframe 访问策略；签名密钥默认自动生成，见第 3、4 节。
 3. **前端嵌入 SDK**：取得业务访问凭证，传入文档 ID，处理就绪、保存和关闭，见第 5 节。
 
 业务系统继续负责用户身份、文档权限、正式文件存储及业务版本。doc-editor 负责编辑、草稿、生成 DOCX 和调用业务文件接口，不要求业务系统更换已有数据库或对象存储。
@@ -182,17 +182,15 @@ cp .env.example .env
 vi .env
 ```
 
-#### 生成 TOKEN_SECRET
+#### 自动管理 TOKEN_SECRET
 
-为每个环境生成独立的随机密钥，并写入 `.env`：
+无需手动生成或填写 `TOKEN_SECRET`。未提供此变量（或为空）时，编辑器首次启动会生成 32 字节随机密钥，保存到 `DATA_DIR/.token-secret`，Linux 文件权限为 0600；后续启动自动复用。文档生命周期清理不会删除此文件，文件损坏或无法读写时启动失败，不会静默轮换。
 
 ```bash
-TOKEN_SECRET="$(openssl rand -hex 32)"
-sed -i "s/^TOKEN_SECRET=.*/TOKEN_SECRET=${TOKEN_SECRET}/" .env
 chmod 600 .env
 ```
 
-`TOKEN_SECRET` 只在编辑器服务端签发和验证短期文档令牌，不能作为业务用户凭证。`.env` 不应提交到代码仓库或随日志交付。生产环境也可由部署平台注入相同环境变量。
+`TOKEN_SECRET` 仅供编辑器签发和验证短期文档令牌，无需与业务后端共享。仍支持通过环境变量显式覆盖；多实例需统一密钥，并另行处理共享存储、会话及 WebSocket 路由。保留数据目录可保留自动密钥；删除目录或无数据卷重建容器会生成新密钥，原文档令牌失效，用户需重新打开文档。`.env` 和密钥文件不应提交到代码仓库或随日志交付。
 
 ### 3.3 确认 Compose 文件
 
@@ -211,7 +209,7 @@ services:
       HOST: "0.0.0.0"
       PORT: "3001"
       DATA_DIR: "/app/data"
-      TOKEN_SECRET: "${TOKEN_SECRET:?Set TOKEN_SECRET in .env}"
+      TOKEN_SECRET: "${TOKEN_SECRET:-}"
       BUSINESS_API_BASE_URL: "${BUSINESS_API_BASE_URL:?Set the business API URL}"
       BUSINESS_DOCUMENT_CONTENT_PATH: "${BUSINESS_DOCUMENT_CONTENT_PATH:?Set the business content path}"
       BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-X-Editor-Token}"
@@ -233,7 +231,7 @@ services:
 | -------------------------------- | --------------------------------------------------- |
 | `HOST` / `PORT`                  | 容器内服务的监听地址与端口。                        |
 | `DATA_DIR`                       | 编辑器草稿、历史和生成文件的工作目录。              |
-| `TOKEN_SECRET`                   | 用于签发、验证短期文档令牌的服务端密钥。            |
+| `TOKEN_SECRET`                   | 可选覆盖；默认自动生成并复用 `DATA_DIR/.token-secret`。 |
 | `BUSINESS_API_BASE_URL`          | 业务后端的基础地址。                                |
 | `BUSINESS_DOCUMENT_CONTENT_PATH` | 业务文件下载和回写路径，`{docId}` 会替换为文档 ID。 |
 | `BUSINESS_TOKEN_HEADER`          | 调用业务文件接口时携带业务凭证的请求头名称。        |

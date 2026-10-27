@@ -20,10 +20,8 @@ COPY server.js ./
 COPY server ./server
 COPY public ./public
 
-# 运维在构建前修改配置；修改后重新 build 并重建容器。
-# TOKEN_SECRET 与业务系统签发 editor token 时使用的密钥一致。
-ENV TOKEN_SECRET=a03de03549caabcae672b5f15af1788205fe6d4d60aae541daa860da84996bee \
-    BUSINESS_API_BASE_URL=https//legalai-backend:8080 \
+# 与业务后端一起交付的固定配置。密钥在首次启动时自动生成，不写入镜像。
+ENV BUSINESS_API_BASE_URL=http://legalai-backend:8080 \
     BUSINESS_DOCUMENT_CONTENT_PATH=/doc-editor/legalai/content \
     BUSINESS_TOKEN_HEADER=token
 

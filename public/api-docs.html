@@ -494,7 +494,7 @@ The editor data directory is \`data/\`, each document stored as \`<id>.json\`.
     "/api/integrations/legalai/session": {
       post: {
         tags: ["Integration"], summary: "Open a business document and issue a scoped editor token", operationId: "createBusinessSession",
-        description: "Validates the business token by downloading the source document. Requires TOKEN_SECRET on the server. Legacy DOC/DOT requires LibreOffice.",
+        description: "Validates the business token by downloading the source document. The editor signing key is automatically generated; TOKEN_SECRET is an optional server override. Legacy DOC/DOT requires LibreOffice.",
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["docId", "businessToken"], properties: {
           docId: { type: "string" }, businessToken: { type: "string", format: "password" }, title: { type: "string" },
           fileType: { type: "string", default: "docx" }, tenantId: { oneOf: [{ type: "string" }, { type: "number" }] }
@@ -504,7 +504,7 @@ The editor data directory is \`data/\`, each document stored as \`<id>.json\`.
             token: { type: "string" }, expiresAt: { type: "integer" }, document: { $ref: "#/components/schemas/DocumentSummary" }, reusedActiveSession: { type: "boolean" }
           } } } } },
           "400": { description: "Invalid document ID" }, "401": { description: "Missing or invalid business credential" },
-          "422": { description: "Document conversion or parsing failed" }, "501": { description: "Legacy converter unavailable" }, "503": { description: "TOKEN_SECRET is not configured" }
+          "422": { description: "Document conversion or parsing failed" }, "501": { description: "Legacy converter unavailable" }
         }
       }
     },
