@@ -21,8 +21,8 @@ COPY server ./server
 COPY public ./public
 
 # 与业务后端一起交付的固定配置。密钥在首次启动时自动生成，不写入镜像。
-ENV BUSINESS_API_BASE_URL=http://legalai-backend:8080 \
-    BUSINESS_DOCUMENT_CONTENT_PATH=/doc-editor/legalai/content \
+ENV BUSINESS_API_BASE_URL=http://legalai-backend:8080/legalai \
+    BUSINESS_DOCUMENT_CONTENT_PATH=/doc-editor/{docId}/content \
     BUSINESS_TOKEN_HEADER=token
 
 # 工作文件保存在容器内，由应用自动创建目录，不需要宿主机目录或数据卷。

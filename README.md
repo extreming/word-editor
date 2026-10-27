@@ -31,6 +31,12 @@ backend, Git remote or physical workspace directory is renamed by this change.
 [Demo site](https://doc.mochi-flow.com) — a deployed instance may differ from this checkout.
 
 
+The canonical service prefix is `/doc-editor`: pages, assets, API and WebSocket
+can all be proxied through one Nginx location. For example, load
+`/doc-editor/js/sdk.js` and initialize with `baseUrl: '/doc-editor'` to embed on
+the frontend's own origin. Root routes remain compatibility aliases. The
+`X-Frame-Options: SAMEORIGIN` protection is retained.
+
 ## Quick start
 
 ```bash

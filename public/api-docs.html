@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>doc-editor — API reference</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
-  <link rel="stylesheet" href="/api-docs.css">
+  <link rel="stylesheet" href="/doc-editor/api-docs.css">
 </head>
 <body>
 
@@ -28,7 +28,7 @@
       The <code>DocEditor</code> SDK creates an iframe hosting the editor in another
       origin (or same-origin) and exposes the commands listed below over
       <code>window.postMessage</code>.  Include
-      <code>&lt;script src=&quot;http://editor-host/js/sdk.js&quot;&gt;&lt;/script&gt;</code>
+      <code>&lt;script src=&quot;http://editor-host/doc-editor/js/sdk.js&quot;&gt;&lt;/script&gt;</code>
       then call <code>DocEditor.init()</code>.
     </p>
     <p data-i18n="apiDocs.sdkSource">This reference is maintained manually against /js/sdk.js and the editor message handlers. It is not generated from source code.</p>
@@ -254,7 +254,7 @@ ed.destroy();
           <thead><tr><th><span data-i18n="apiDocs.th.option">Option</span></th><th><span data-i18n="apiDocs.th.type">Type</span></th><th><span data-i18n="apiDocs.th.default">Default</span></th><th><span data-i18n="apiDocs.th.description">Description</span></th></tr></thead>
           <tbody>
             <tr><td>container</td><td>string | Element</td><td><i>required</i></td><td>CSS selector or DOM node to mount the iframe</td></tr>
-            <tr><td>baseUrl</td><td>string</td><td>script origin</td><td>Editor server URL</td></tr>
+            <tr><td>baseUrl</td><td>string</td><td>script service base</td><td>Editor URL including /doc-editor (origin-only values are also accepted)</td></tr>
             <tr><td>docId</td><td>string</td><td>—</td><td>Open a specific document on load</td></tr>
             <tr><td>mode</td><td><code>"edit"|"view"</code></td><td>edit</td><td>Initial editing mode</td></tr>
             <tr><td>toolbar</td><td>boolean</td><td>true</td><td>Show the toolbar inside the iframe</td></tr>
@@ -476,7 +476,7 @@ The editor data directory is \`data/\`, each document stored as \`<id>.json\`.
 **Server** — Node.js with jsdom for server-side DOCX parsing. Development URL: \`http://localhost:3001\`.
 `,
   },
-  servers: [{ url: location.origin, description: "Current server" }],
+  servers: [{ url: location.origin + "/doc-editor", description: "Current server" }],
   tags: [
     { name: "Integration", description: "Business session bootstrap and formal save-back" },
     { name: "Documents", description: "CRUD for document metadata and content" },
@@ -863,6 +863,6 @@ else {
 }
 
 </script>
-<script type="module" src="/js/api-docs.js"></script>
+<script type="module" src="/doc-editor/js/api-docs.js"></script>
 </body>
 </html>

@@ -23,6 +23,17 @@ const { version: APP_VERSION } = require("./package.json");
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "127.0.0.1";
+const EDITOR_BASE_PATH = "/doc-editor";
+
+// Keep legacy root routes as aliases for existing integrations. All browser
+// resources use the canonical prefix, so a proxy only needs this one location.
+function editorUrl(req) {
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  if (url.pathname.startsWith(`${EDITOR_BASE_PATH}/`)) {
+    url.pathname = url.pathname.slice(EDITOR_BASE_PATH.length);
+  }
+  return url;
+}
 // Secret used to sign/verify short-lived scoped tokens (see server/scopedAuth.js).
 let TOKEN_SECRET;
 const BUSINESS_API_BASE_URL = (
@@ -985,8 +996,11 @@ function serveStatic(req, res, url) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   try {
+    const url = editorUrl(req);
+    if (url.pathname === EDITOR_BASE_PATH) {
+      return send(res, 308, "", { Location: `${EDITOR_BASE_PATH}/${url.search}` });
+    }
     if (url.pathname === "/version" && req.method === "GET") sendVersionPage(res);
     else if (url.pathname.startsWith("/api/")) await api(req, res, url);
     else serveStatic(req, res, url);
@@ -1120,7 +1134,9 @@ async function handleMessage(client, text) {
 }
 
 server.on("upgrade", (req, socket) => {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  let url;
+  try { url = editorUrl(req); }
+  catch { socket.write("HTTP/1.1 400 Bad Request\r\n\r\n"); socket.destroy(); return; }
   // The target document isn't known yet at handshake time (it arrives later
   // in the "hello" message), so any validly-signed credential — global token
   // or a scoped token for ANY document — passes here; per-document scoping

@@ -1,6 +1,6 @@
 // store.js — backend API client, autosave with conflict detection, WebSocket sync.
 
-const API = "/api/documents";
+const API = "/doc-editor/api/documents";
 
 // Short-lived document token returned by the LegalAI session bootstrap.
 // It is used only for this iframe's document REST calls and WebSocket room.
@@ -10,7 +10,7 @@ export function setLegalAiBusinessToken(token) { legalAiBusinessToken = token ||
 
 export async function openLegalAiSession({ docId, businessToken, title, fileType, tenantId }) {
   legalAiBusinessToken = businessToken || null;
-  const response = await fetch("/api/integrations/legalai/session", {
+  const response = await fetch("/doc-editor/api/integrations/legalai/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ docId, businessToken, title, fileType, tenantId }),
@@ -249,7 +249,7 @@ export class SyncClient {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     try {
       const qs = sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : "";
-      this.ws = new WebSocket(`${proto}//${location.host}/ws${qs}`);
+      this.ws = new WebSocket(`${proto}//${location.host}/doc-editor/ws${qs}`);
     } catch { return; }
     this.ws.addEventListener("open", () => {
       this.retry = 0;

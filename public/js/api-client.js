@@ -20,7 +20,11 @@
      * @param {string} [docId]  Optional document ID (auto-creates if omitted)
      */
     constructor(baseUrl, docId) {
-      this.baseUrl = baseUrl.replace(/\/+$/, "");
+      const url = new URL(baseUrl, location.href);
+      const servicePath = url.pathname.replace(/\/+$/, "");
+      url.pathname = servicePath.endsWith("/doc-editor") ? servicePath : `${servicePath}/doc-editor`;
+      url.search = url.hash = "";
+      this.baseUrl = url.href.replace(/\/+$/, "");
       this.docId = docId || null;
     }
 

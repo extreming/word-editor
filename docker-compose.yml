@@ -20,7 +20,7 @@ services:
       TOKEN_SECRET: "${TOKEN_SECRET:-}"
       BUSINESS_API_BASE_URL: "${BUSINESS_API_BASE_URL:?Set the business API URL}"
       BUSINESS_DOCUMENT_CONTENT_PATH: "${BUSINESS_DOCUMENT_CONTENT_PATH:?Set the business content path}"
-      BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-X-Editor-Token}"
+      BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-token}"
       BUSINESS_REQUEST_TIMEOUT_MS: "30000"
       # Draft autosave remains enabled inside doc-editor. This switch only
       # controls periodic publication of the complete DOCX to the business system.

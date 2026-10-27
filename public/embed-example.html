@@ -26,10 +26,10 @@
   <div id="log"></div>
 
   <script type="module">
-    import { applyI18n } from "/js/i18n.js";
+    import { applyI18n } from "/doc-editor/js/i18n.js";
     applyI18n();
   </script>
-  <script src="/js/sdk.js"></script>
+  <script src="/doc-editor/js/sdk.js"></script>
   <script>
     const logEl = document.getElementById("log");
     const log = (...a) => { logEl.textContent += a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" ") + "\n"; logEl.scrollTop = 1e9; };

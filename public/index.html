@@ -6,7 +6,7 @@
   <title>doc-editor — Online Document Editor</title>
   <script>
     if (new URLSearchParams(location.search).get("embed") === "1") {
-      location.replace("/editor.html" + location.search + location.hash);
+      location.replace("/doc-editor/editor.html" + location.search + location.hash);
     }
   </script>
   <style>
@@ -106,11 +106,11 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
 <div class="header">
   <div class="logo">doc-editor</div>
   <div class="nav">
-    <a href="/editor.html" data-i18n="home.nav.editor">Editor</a>
-    <a href="/embed-demo.html" data-i18n="home.nav.embedDemo">Embed demo</a>
-    <a href="/api-docs.html" data-i18n="home.nav.apiDocs">API docs</a>
+    <a href="/doc-editor/editor.html" data-i18n="home.nav.editor">Editor</a>
+    <a href="/doc-editor/embed-demo.html" data-i18n="home.nav.embedDemo">Embed demo</a>
+    <a href="/doc-editor/api-docs.html" data-i18n="home.nav.apiDocs">API docs</a>
     <a href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.links.githubRepo">Upstream repository</a>
-    <a href="/editor.html" class="btn-open" data-i18n="home.nav.openEditor">Open editor →</a>
+    <a href="/doc-editor/editor.html" class="btn-open" data-i18n="home.nav.openEditor">Open editor →</a>
     <button id="btn-lang" data-i18n="lang.switchTo" style="font:13px inherit;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer">中文</button>
   </div>
 </div>
@@ -126,8 +126,8 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
     </p>
     <div class="actions">
       <a class="primary" href="#demo" data-i18n="home.hero.tryDemo">Try the demo ↓</a>
-      <a class="secondary" href="/editor.html" data-i18n="home.hero.openStandalone">Open standalone editor</a>
-      <a class="secondary" href="/js/sdk.js" data-i18n="home.hero.downloadSdk">Download SDK</a>
+      <a class="secondary" href="/doc-editor/editor.html" data-i18n="home.hero.openStandalone">Open standalone editor</a>
+      <a class="secondary" href="/doc-editor/js/sdk.js" data-i18n="home.hero.downloadSdk">Download SDK</a>
       <a class="secondary" href="https://github.com/fjsimonwang/word-editor" target="_blank" data-i18n="home.hero.starGithub">Upstream project</a>
     </div>
   </div>
@@ -193,15 +193,15 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
   <div class="links-row">
     <div class="col">
       <h4 data-i18n="home.links.apiRef">API reference</h4>
-      <a href="/api-docs.html" data-i18n="home.links.swagger">Swagger — REST API</a>
-      <a href="/api-docs.html#sdk" data-i18n="home.links.sdkCommands">SDK commands</a>
-      <a href="/js/sdk.js" data-i18n="home.links.sdkDownload">sdk.js (download)</a>
-      <a href="/js/api-client.js">api-client.js</a>
+      <a href="/doc-editor/api-docs.html" data-i18n="home.links.swagger">Swagger — REST API</a>
+      <a href="/doc-editor/api-docs.html#sdk" data-i18n="home.links.sdkCommands">SDK commands</a>
+      <a href="/doc-editor/js/sdk.js" data-i18n="home.links.sdkDownload">sdk.js (download)</a>
+      <a href="/doc-editor/js/api-client.js">api-client.js</a>
     </div>
     <div class="col">
       <h4 data-i18n="home.links.demos">Demos</h4>
-      <a href="/embed-demo.html" data-i18n="home.links.demoHost">Demo with host controls</a>
-      <a href="/editor.html" data-i18n="home.links.standalone">Standalone editor</a>
+      <a href="/doc-editor/embed-demo.html" data-i18n="home.links.demoHost">Demo with host controls</a>
+      <a href="/doc-editor/editor.html" data-i18n="home.links.standalone">Standalone editor</a>
     </div>
     <div class="col">
       <h4 data-i18n="home.links.deployment">Deployment</h4>
@@ -210,7 +210,7 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
     </div>
     <div class="col">
       <h4 data-i18n="home.links.server">Server</h4>
-      <a href="/api/health" data-i18n="home.links.healthCheck">Health check</a>
+      <a href="/doc-editor/api/health" data-i18n="home.links.healthCheck">Health check</a>
       <span class="plain" data-i18n="home.links.nodePort">Node.js · port 3001</span>
     </div>
   </div>
@@ -236,13 +236,13 @@ footer .foot-meta code { font-family: "SF Mono", Menlo, Consolas, monospace; fon
 </footer>
 
 <script type="module">
-  import { applyI18n, t, getLocale, setLocale } from "/js/i18n.js";
+  import { applyI18n, t, getLocale, setLocale } from "/doc-editor/js/i18n.js";
   applyI18n();
   const langBtn = document.getElementById("btn-lang");
   if (langBtn) langBtn.addEventListener("click", () => setLocale(getLocale() === "zh" ? "en" : "zh"));
   window.__i18nT = t; // used by the classic-script block below
 </script>
-<script src="/js/sdk.js"></script>
+<script src="/doc-editor/js/sdk.js"></script>
 <script>
   var resEl = document.getElementById("api-result");
   var statusEl = document.getElementById("frame-status");

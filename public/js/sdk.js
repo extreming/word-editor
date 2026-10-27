@@ -2,11 +2,11 @@
  * DocEditor SDK — embed the Word-Compatible Editor in any web page.
  *
  * Usage:
- *   <script src="http://your-editor-host/js/sdk.js"></script>
+ *   <script src="http://your-editor-host/doc-editor/js/sdk.js"></script>
  *   <script>
  *     const ed = DocEditor.init({
  *       container: "#editor-holder",        // element or selector
- *       baseUrl: "http://localhost:3001",   // editor server (defaults to script origin)
+ *       baseUrl: "/doc-editor",            // prefixed service URL (defaults to SDK script base)
  *       docId: "…",                          // optional: open an existing document
  *       mode: "edit",                        // "edit" | "view"
  *       toolbar: true,
@@ -64,10 +64,10 @@
 (function (global) {
   "use strict";
 
-  const scriptOrigin = (() => {
+  const scriptBaseUrl = (() => {
     try {
       const s = document.currentScript;
-      return s ? new URL(s.src).origin : location.origin;
+      return s ? new URL("../", s.src).href : location.origin;
     } catch {
       return location.origin;
     }
@@ -80,7 +80,11 @@
         : opts.container;
     if (!container) throw new Error("DocEditor.init: container not found");
 
-    const baseUrl = (opts.baseUrl || scriptOrigin).replace(/\/$/, "");
+    const serviceUrl = new URL(opts.baseUrl || scriptBaseUrl, location.href);
+    const servicePath = serviceUrl.pathname.replace(/\/+$/, "");
+    serviceUrl.pathname = servicePath.endsWith("/doc-editor") ? servicePath : `${servicePath}/doc-editor`;
+    serviceUrl.search = serviceUrl.hash = "";
+    const baseUrl = serviceUrl.href.replace(/\/+$/, "");
     const q = new URLSearchParams();
     q.set("embed", "1");
     if (opts.docId) q.set("doc", opts.docId);

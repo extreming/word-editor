@@ -182,6 +182,16 @@ cp .env.example .env
 vi .env
 ```
 
+部署到 LegalAI 107 环境时，配置示例如下（容器须与 `legalai-backend` 处于同一 Docker 网络）：
+
+```dotenv
+BUSINESS_API_BASE_URL=http://legalai-backend:8080/legalai
+BUSINESS_DOCUMENT_CONTENT_PATH=/doc-editor/{docId}/content
+BUSINESS_TOKEN_HEADER=token
+```
+
+保留 `{docId}` 占位符。若改用宿主机地址，基础地址可填写 `http://10.62.173.107:8080/legalai`。不要直接复制本地开发环境的 `.env`；Compose 中的环境变量会覆盖 Dockerfile 默认值。修改配置后需重新创建容器，仅重启容器不会更新环境变量。
+
 #### 自动管理 TOKEN_SECRET
 
 无需手动生成或填写 `TOKEN_SECRET`。未提供此变量（或为空）时，编辑器首次启动会生成 32 字节随机密钥，保存到 `DATA_DIR/.token-secret`，Linux 文件权限为 0600；后续启动自动复用。文档生命周期清理不会删除此文件，文件损坏或无法读写时启动失败，不会静默轮换。
@@ -212,7 +222,7 @@ services:
       TOKEN_SECRET: "${TOKEN_SECRET:-}"
       BUSINESS_API_BASE_URL: "${BUSINESS_API_BASE_URL:?Set the business API URL}"
       BUSINESS_DOCUMENT_CONTENT_PATH: "${BUSINESS_DOCUMENT_CONTENT_PATH:?Set the business content path}"
-      BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-X-Editor-Token}"
+      BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-token}"
       BUSINESS_REQUEST_TIMEOUT_MS: "30000"
       BUSINESS_AUTO_COMMIT_ENABLED: "false"
       VERSION_HISTORY_ENABLED: "false"
