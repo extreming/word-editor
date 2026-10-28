@@ -13,20 +13,15 @@ FROM node:22-bookworm-slim
 WORKDIR /app
 
 
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# The delivery ZIP contains this Dockerfile and doc-editor-source.tar.
+COPY doc-editor-source.tar /tmp/doc-editor-source.tar
+RUN tar -xf /tmp/doc-editor-source.tar -C /app \
+    && rm /tmp/doc-editor-source.tar \
+    && npm ci --omit=dev
 
-COPY server.js ./
-COPY server ./server
-COPY public ./public
-
-# Persist editor working data by mounting /app/data. LegalAI remains the
-# system of record for formally committed business documents.
-RUN mkdir -p /app/data
-
-ENV HOST=0.0.0.0
-ENV PORT=3001
-ENV DATA_DIR=/app/data
+ENV HOST=0.0.0.0 \
+    PORT=3001 \
+    DATA_DIR=/app/data
 
 EXPOSE 3001
 

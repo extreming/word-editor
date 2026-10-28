@@ -1,7 +1,9 @@
 data/
 .git/
 node_modules/
+.env
 *.log
 .DS_Store
 README.md
 run.sh
+deliverables/
