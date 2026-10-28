@@ -15,6 +15,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { mintToken, verifyToken } = require("./server/scopedAuth");
+const { resolveTokenSecret } = require("./server/tokenSecret");
 const { createStorage } = require("./server/storage");
 const { createDataLifecycle, DAY_MS } = require("./server/dataLifecycle");
 const { convertToDocx: convertDocToDocx } = require("./server/docConvert");
@@ -23,7 +24,7 @@ const { version: APP_VERSION } = require("./package.json");
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "127.0.0.1";
 // Secret used to sign/verify short-lived scoped tokens (see server/scopedAuth.js).
-const TOKEN_SECRET = process.env.TOKEN_SECRET || "";
+let TOKEN_SECRET;
 const BUSINESS_API_BASE_URL = (
   process.env.BUSINESS_API_BASE_URL || process.env.LEGALAI_BASE_URL || ""
 ).replace(/\/$/, "");
@@ -523,7 +524,6 @@ async function api(req, res, url) {
   // the requested contract from LegalAI. After that succeeds we exchange it
   // for a short-lived token scoped to this one editor document.
   if (p === "/api/integrations/legalai/session" && method === "POST") {
-    if (!TOKEN_SECRET) return sendJSON(res, 503, { error: "TOKEN_SECRET is required for LegalAI integration" });
     const body = await readJSON(req);
     const id = String(body.docId || "");
     const businessToken = String(body.businessToken || "");
@@ -1243,6 +1243,7 @@ setInterval(() => {
 }, DISK_CHECK_INTERVAL_MS).unref();
 
 async function startServer() {
+  TOKEN_SECRET = resolveTokenSecret(DATA);
   if (STARTUP_DRAFT_PURGE_ENABLED) await dataLifecycle.purgeDraftsAndHistoryOnStartup();
   await dataLifecycle.runDailyCleanup();
   await dataLifecycle.checkDiskUsage();

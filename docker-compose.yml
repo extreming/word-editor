@@ -17,7 +17,7 @@ services:
       DATA_DIR: "/app/data"
       STORAGE_DRIVER: "local"
       NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/host-ca-bundle.crt"
-      TOKEN_SECRET: "${TOKEN_SECRET:?Set TOKEN_SECRET in .env}"
+      TOKEN_SECRET: "${TOKEN_SECRET:-}"
       BUSINESS_API_BASE_URL: "${BUSINESS_API_BASE_URL:?Set the business API URL}"
       BUSINESS_DOCUMENT_CONTENT_PATH: "${BUSINESS_DOCUMENT_CONTENT_PATH:?Set the business content path}"
       BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-X-Editor-Token}"

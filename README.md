@@ -44,6 +44,14 @@ PORT=4000 HOST=0.0.0.0 DATA_DIR=/var/doc-editor node server.js
 Requires Node.js 22. Full env var reference is in
 [Server configuration](#server-configuration) below.
 
+For local development against a backend with an untrusted HTTPS certificate,
+configure `BUSINESS_API_BASE_URL` in `.env` and run `npm run dev`. This command
+loads `.env` and disables TLS certificate verification for all HTTPS requests
+in the editor's Node process. Use it only for local development; it refuses to
+start when `NODE_ENV=production`. Stop with Ctrl+C; no PowerShell environment
+changes or cleanup are needed. `npm start` retains normal TLS verification
+unless explicitly overridden in the environment.
+
 Open `/editor.html` for the standalone editor; `/` is the landing page and demo.
 On PowerShell, run `npm ci` and `npm start` as separate commands. To override
 the port, set `$env:PORT = "4000"` before starting the server.
@@ -71,7 +79,8 @@ docker run -d --name doc-editor -p 3001:3001 -v doc-editor-data:/app/data doc-ed
 ```
 
 Before using the checked-in Compose file, configure its host data and CA-bundle
-mounts, business API address, and signing secret for the target environment.
+mounts and business API address for the target environment. The signing secret
+is generated automatically unless `TOKEN_SECRET` is explicitly configured.
 It binds host port 3001 to loopback, disables internal version history, and
 enables startup draft cleanup. A data volume alone does not disable that cleanup.
 
@@ -275,7 +284,7 @@ REST helper endpoint has the same concurrency guard or browser review behavior.
 |---|---|---|
 | `PORT` / `HOST` | `3001` / `127.0.0.1` | listen address |
 | `DATA_DIR` | `./data` | local working directory for drafts, versions, and generated DOCX files |
-| `TOKEN_SECRET` | required for LegalAI | HMAC signing key for the short-lived document token issued by the LegalAI session endpoint |
+| `TOKEN_SECRET` | auto-generated | Optional override for the editor's HMAC signing key; otherwise generated and reused at `DATA_DIR/.token-secret`. Losing or changing the key invalidates existing document tokens. No backend key sharing is required. |
 | `SOFFICE_PATH` | `soffice` (PATH lookup) | path to the LibreOffice binary used for legacy `.doc`/`.dot` conversion |
 | `BUSINESS_API_BASE_URL` | unset | host business-system API base URL |
 | `BUSINESS_DOCUMENT_CONTENT_PATH` | `/doc-editor/{docId}/content` | host endpoint used to download and publish a business document |
