@@ -50,6 +50,14 @@ PORT=4000 HOST=0.0.0.0 DATA_DIR=/var/doc-editor node server.js
 Requires Node.js 22. Full env var reference is in
 [Server configuration](#server-configuration) below.
 
+For local development against a backend with an untrusted HTTPS certificate,
+configure `BUSINESS_API_BASE_URL` in `.env` and run `npm run dev`. This command
+loads `.env` and disables TLS certificate verification for all HTTPS requests
+in the editor's Node process. Use it only for local development; it refuses to
+start when `NODE_ENV=production`. Stop with Ctrl+C; no PowerShell environment
+changes or cleanup are needed. `npm start` retains normal TLS verification
+unless explicitly overridden in the environment.
+
 Open `/editor.html` for the standalone editor; `/` is the landing page and demo.
 On PowerShell, run `npm ci` and `npm start` as separate commands. To override
 the port, set `$env:PORT = "4000"` before starting the server.
