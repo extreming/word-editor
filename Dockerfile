@@ -13,12 +13,11 @@ FROM node:22-bookworm-slim
 WORKDIR /app
 
 
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-
-COPY server.js ./
-COPY server ./server
-COPY public ./public
+# The delivery ZIP contains this Dockerfile and doc-editor-source.tar.
+COPY doc-editor-source.tar /tmp/doc-editor-source.tar
+RUN tar -xf /tmp/doc-editor-source.tar -C /app \
+    && rm /tmp/doc-editor-source.tar \
+    && npm ci --omit=dev
 
 # 与业务后端一起交付的固定配置。密钥在首次启动时自动生成，不写入镜像。
 ENV BUSINESS_API_BASE_URL=http://legalai-backend:8080/legalai \

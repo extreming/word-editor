@@ -8,30 +8,21 @@ services:
       - "127.0.0.1:3001:3001"
 
     volumes:
-      - ${HOST_DATA_DIR:-./data}:/app/data
       - /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/etc/ssl/certs/host-ca-bundle.crt:ro
 
     environment:
-      HOST: "0.0.0.0"
-      PORT: "3001"
-      DATA_DIR: "/app/data"
-      STORAGE_DRIVER: "local"
-      NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/host-ca-bundle.crt"
-      TOKEN_SECRET: "${TOKEN_SECRET:-}"
-      BUSINESS_API_BASE_URL: "${BUSINESS_API_BASE_URL:?Set the business API URL}"
-      BUSINESS_DOCUMENT_CONTENT_PATH: "${BUSINESS_DOCUMENT_CONTENT_PATH:?Set the business content path}"
-      BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-token}"
+      BUSINESS_API_BASE_URL: "https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai"
+      BUSINESS_DOCUMENT_CONTENT_PATH: "/doc-editor/{docId}/content"
+      BUSINESS_TOKEN_HEADER: "token"
       BUSINESS_REQUEST_TIMEOUT_MS: "30000"
-      # Draft autosave remains enabled inside doc-editor. This switch only
-      # controls periodic publication of the complete DOCX to the business system.
+      NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/host-ca-bundle.crt"
+
       BUSINESS_AUTO_COMMIT_ENABLED: "false"
       BUSINESS_AUTO_COMMIT_INTERVAL_MS: "300000"
       VERSION_HISTORY_ENABLED: "false"
-      # Local working-data lifecycle. Successful SDK close + last WebSocket
-      # departure cleans immediately; the daily sweep applies the 24h fallback.
+      STARTUP_DRAFT_PURGE_ENABLED: "true"
       DATA_RETENTION_HOURS: "24"
       DATA_CLEANUP_INTERVAL_MS: "86400000"
-      STARTUP_DRAFT_PURGE_ENABLED: "true"
       DISK_CHECK_INTERVAL_MS: "300000"
       DISK_WARNING_PERCENT: "70"
       DISK_CRITICAL_PERCENT: "85"

@@ -152,79 +152,57 @@ Content-Type: multipart/form-data; boundary=...
 
 ## 3. 部署编辑器服务
 
-获取我们提供的源码包，在服务器安装 Docker 和 Docker Compose 后即可部署。
+本地执行 `npm run build`，将 `deliverables/` 下带日期时间的交付 ZIP 上传服务器。ZIP 内含 `doc-editor-source.tar`、`Dockerfile`、`compose.yml` 三个文件；服务器安装 Docker 和 Docker Compose 后，解压外层 ZIP 即可构建部署，源码 tar 由 Dockerfile 自动解压。
 
 ### 3.1 准备运行目录
 
-建议目录：
+将交付 ZIP 解压至 `/opt/doc-editor/services`，确保三个交付文件位于同一目录。工作文件和自动生成的签名密钥保存在容器内部的 `/app/data`；应用启动时自动创建目录，无需准备宿主机数据目录或数据卷。仅保留 CA 证书的只读挂载。
 
-```text
-/opt/doc-editor/
-├── services/                  # 本仓库代码及下方部署配置
-│   ├── dockflow.zip
-└── data/                      # 编辑器工作数据
-```
+重启同一个容器会保留工作文件；删除或重新创建容器（包括更新镜像或配置后替换容器）会丢失容器内的工作文件和签名密钥，旧编辑器令牌失效，需要重新打开文档。业务后端已正式保存的文件不受影响。
 
-将交付的代码放入 `services`，创建可供容器写入的 `data` 目录。
+从原宿主机挂载方式切换前，应让正在编辑的用户完成正式保存。旧宿主机目录不会自动迁移进容器，也不会被本次配置改动删除。
 
-### 3.2 配置环境变量
+### 3.2 配置职责
 
-在 Linux 服务器上进入 `services` 目录，从模板创建 `.env`：
+Dockerfile 仅保留镜像通用默认值 `HOST=0.0.0.0`、`PORT=3001`、`DATA_DIR=/app/data`。业务地址、鉴权头、CA 路径和运行策略由 Compose 的 `environment` 直接填写固定值，Docker 部署不需要创建或修改 `.env`，也不需要手动传入环境变量。
 
-```bash
-cd /opt/doc-editor/services
-cp .env.example .env
-```
+当前业务基础地址为 `https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai`，下载和回写路径为 `/doc-editor/{docId}/content`，业务请求头为 `token`。编辑器容器必须能解析并访问该 HTTPS 域名。
 
-然后编辑 `.env`，填写本环境的 `BUSINESS_API_BASE_URL`、`BUSINESS_DOCUMENT_CONTENT_PATH` 和 `BUSINESS_TOKEN_HEADER`：
+Compose 关闭定时业务回写、内部版本历史和启动草稿清理，保留期为 24 小时；普通关闭清理和到期清理仍然生效。仅修改部署参数时，修改 Compose 后运行 `docker compose -f compose.yml up -d` 即可按需重建容器，无需重建镜像。源码或 Dockerfile 变化时才需要添加 `--build`。单纯 `restart` 不会更新容器环境变量。
 
-```bash
-vi .env
-```
-
-部署到 LegalAI 107 环境时，配置示例如下（容器须与 `legalai-backend` 处于同一 Docker 网络）：
-
-```dotenv
-BUSINESS_API_BASE_URL=http://legalai-backend:8080/legalai
-BUSINESS_DOCUMENT_CONTENT_PATH=/doc-editor/{docId}/content
-BUSINESS_TOKEN_HEADER=token
-```
-
-保留 `{docId}` 占位符。若改用宿主机地址，基础地址可填写 `http://10.62.173.107:8080/legalai`。不要直接复制本地开发环境的 `.env`；Compose 中的环境变量会覆盖 Dockerfile 默认值。修改配置后需重新创建容器，仅重启容器不会更新环境变量。
+`.env.example` 仅供本地 `npm start` / `npm run dev` 创建 `.env` 使用。Compose 没有 `env_file` 或变量插值，不会将本地 `.env` 的业务值传给容器。`.dockerignore` 排除本地环境文件，避免进入镜像构建上下文。
 
 #### 自动管理 TOKEN_SECRET
 
-无需手动生成或填写 `TOKEN_SECRET`。未提供此变量（或为空）时，编辑器首次启动会生成 32 字节随机密钥，保存到 `DATA_DIR/.token-secret`，Linux 文件权限为 0600；后续启动自动复用。文档生命周期清理不会删除此文件，文件损坏或无法读写时启动失败，不会静默轮换。
+无需手动生成或填写 `TOKEN_SECRET`。编辑器首次启动会生成 32 字节随机密钥，保存到 `DATA_DIR/.token-secret`，Linux 文件权限为 0600；后续启动自动复用。文档生命周期清理不会删除此文件，文件损坏或无法读写时启动失败，不会静默轮换。
 
-```bash
-chmod 600 .env
-```
-
-`TOKEN_SECRET` 仅供编辑器签发和验证短期文档令牌，无需与业务后端共享。仍支持通过环境变量显式覆盖；多实例需统一密钥，并另行处理共享存储、会话及 WebSocket 路由。保留数据目录可保留自动密钥；删除目录或无数据卷重建容器会生成新密钥，原文档令牌失效，用户需重新打开文档。`.env` 和密钥文件不应提交到代码仓库或随日志交付。
+密钥仅供编辑器签发和验证短期文档令牌，无需与业务后端共享，也不写入镜像。同一容器重启会复用自动密钥；删除或重新创建容器会生成新密钥，原文档令牌失效，用户需重新打开文档。多实例需统一密钥，并另行处理共享存储、会话及 WebSocket 路由。
 
 ### 3.3 确认 Compose 文件
+
+Compose 负责部署参数、构建、端口、CA 挂载及重启策略：
 
 ```yaml
 services:
   doc-editor:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: doc-editor:local
+    build: .
+    image: doc-editor
+    container_name: doc-editor
+
     ports:
       - "127.0.0.1:3001:3001"
+
     volumes:
-      - ../data:/app/data
+      - /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/etc/ssl/certs/host-ca-bundle.crt:ro
+
+    # Fixed deployment values; no .env file or shell variables are required.
     environment:
-      HOST: "0.0.0.0"
-      PORT: "3001"
-      DATA_DIR: "/app/data"
-      TOKEN_SECRET: "${TOKEN_SECRET:-}"
-      BUSINESS_API_BASE_URL: "${BUSINESS_API_BASE_URL:?Set the business API URL}"
-      BUSINESS_DOCUMENT_CONTENT_PATH: "${BUSINESS_DOCUMENT_CONTENT_PATH:?Set the business content path}"
-      BUSINESS_TOKEN_HEADER: "${BUSINESS_TOKEN_HEADER:-token}"
+      BUSINESS_API_BASE_URL: "https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai"
+      BUSINESS_DOCUMENT_CONTENT_PATH: "/doc-editor/{docId}/content"
+      BUSINESS_TOKEN_HEADER: "token"
       BUSINESS_REQUEST_TIMEOUT_MS: "30000"
       BUSINESS_AUTO_COMMIT_ENABLED: "false"
+      BUSINESS_AUTO_COMMIT_INTERVAL_MS: "300000"
       VERSION_HISTORY_ENABLED: "false"
       STARTUP_DRAFT_PURGE_ENABLED: "true"
       DATA_RETENTION_HOURS: "24"
@@ -255,7 +233,7 @@ services:
 | `DISK_WARNING_PERCENT`           | 磁盘占用达到该百分比时记录告警。                    |
 | `DISK_CRITICAL_PERCENT`          | 磁盘占用达到该百分比时记录严重告警。                |
 
-SELinux 启用的部署环境如需卷重标记，可按主机策略将数据挂载写为 `../data:/app/data:Z`。
+当前不挂载工作数据目录，工作文件仅保存在容器内。
 
 启动并验证服务：
 
@@ -286,7 +264,6 @@ LegalAI request failed (UNABLE_TO_GET_ISSUER_CERT_LOCALLY): unable to get local 
 ```yaml
 # 请替换正式证书路径和名称，合并到上述服务已有的 volumes、environment 中
 volumes:
-  - ../data:/app/data
   - /path/to/business-ca.pem:/etc/ssl/certs/business-ca.pem:ro
 environment:
   NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/business-ca.pem"
@@ -511,7 +488,7 @@ curl -fsS https://legaloffice.lenovo.com/api/health
 - **正式存储**：业务系统是正式文件来源和最终存储；`/app/data` 存放编辑器草稿、版本及生成文件，不应当作业务文档永久库。
 - **关闭清理**：成功执行 `close()`，且关闭提交版本、当前版本和已提交版本一致、该文档 WebSocket 房间无人在线后，工作数据可立即清除。下一次打开重新读取业务文件。
 - **到期清理**：非活动业务文档按 `DATA_RETENTION_HOURS` 清理，超过保留期的未确认回写草稿也可能被清除；不是“未保存就永不清理”。
-- **启动清理**：代码默认 `STARTUP_DRAFT_PURGE_ENABLED=true` 会清除草稿正文、批注、页面设置及历史，保留最小元数据。本文示例设为 `false`，但重新建立无活动房间的业务会话仍会从业务文件初始化，不能把草稿当作自动恢复承诺。
+- **启动清理**：代码默认 `STARTUP_DRAFT_PURGE_ENABLED=true` 会清除草稿正文、批注、页面设置及历史，保留最小元数据。Compose 设为 `false`，但重新建立无活动房间的业务会话仍会从业务文件初始化，不能把草稿当作自动恢复承诺。
 - **历史版本**：开启时最多保留 10 份、最近 3 天；关闭清理也会删除历史。业务系统需自行保留正式业务版本。
 - **审计和磁盘**：清理与磁盘告警记录在 `DATA_DIR/cleanup-audit.log`，本文配置在 70%/85% 使用率分别告警。
 - **格式范围**：本指南的业务回写流程针对 Word 文档，输出 DOCX。PDF 查看/批注和浏览器导出不代表支持 PDF 业务文件回写；复杂 DOCX 应用业务样本验证格式保留。
@@ -524,4 +501,4 @@ docker compose up -d --build
 docker compose logs --tail=100 doc-editor
 ```
 
-更新前安排正在编辑的用户完成正式保存，保留可回退的镜像及业务正式文档版本。工作目录持久挂载不能阻止应用自己的清理策略；不要在运维脚本中无条件删除数据目录。业务地址及密钥变更也需重新创建容器；轮换 `TOKEN_SECRET` 会使旧文档令牌失效，应安排重新打开。
+更新前安排正在编辑的用户完成正式保存，保留可回退的镜像及业务正式文档版本。更新或修改配置可能重新创建容器，容器内工作文件及自动密钥会丢失；同一容器重启保留文件，但仍受应用关闭与到期清理策略约束。业务地址及密钥变更也需重新创建容器；轮换 `TOKEN_SECRET` 会使旧文档令牌失效，应安排重新打开。
