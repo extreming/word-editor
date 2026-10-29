@@ -20,7 +20,7 @@ RUN tar -xf /tmp/doc-editor-source.tar -C /app \
     && npm ci --omit=dev
 
 # 与业务后端一起交付的固定配置。密钥在首次启动时自动生成，不写入镜像。
-ENV BUSINESS_API_BASE_URL=http://legalai-backend:8080/legalai \
+ENV BUSINESS_API_BASE_URL=http://app-backend:8080/legalai \
     BUSINESS_DOCUMENT_CONTENT_PATH=/doc-editor/{docId}/content \
     BUSINESS_TOKEN_HEADER=token
 
@@ -33,7 +33,7 @@ ENV HOST=0.0.0.0 \
     BUSINESS_AUTO_COMMIT_ENABLED=false \
     BUSINESS_AUTO_COMMIT_INTERVAL_MS=300000 \
     VERSION_HISTORY_ENABLED=false \
-    STARTUP_DRAFT_PURGE_ENABLED=false \
+    STARTUP_DRAFT_PURGE_ENABLED=true \
     DATA_RETENTION_HOURS=24 \
     DATA_CLEANUP_INTERVAL_MS=86400000 \
     DISK_CHECK_INTERVAL_MS=300000 \

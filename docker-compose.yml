@@ -1,30 +1,10 @@
 services:
   doc-editor:
     build: .
-    image: doc-editor
-    container_name: doc-editor
-
+    image: doc-editor:aio
+    container_name: legalai-doc-editor
     ports:
       - "127.0.0.1:3001:3001"
-
-    volumes:
-      - /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/etc/ssl/certs/host-ca-bundle.crt:ro
-
+    restart: "no"
     environment:
-      BUSINESS_API_BASE_URL: "https://legalai-gtm-backend-dev.t-sy-in.earth.xcloud.lenovo.com/legalai"
-      BUSINESS_DOCUMENT_CONTENT_PATH: "/doc-editor/{docId}/content"
-      BUSINESS_TOKEN_HEADER: "token"
-      BUSINESS_REQUEST_TIMEOUT_MS: "30000"
-      NODE_EXTRA_CA_CERTS: "/etc/ssl/certs/host-ca-bundle.crt"
-
-      BUSINESS_AUTO_COMMIT_ENABLED: "false"
-      BUSINESS_AUTO_COMMIT_INTERVAL_MS: "300000"
-      VERSION_HISTORY_ENABLED: "false"
-      STARTUP_DRAFT_PURGE_ENABLED: "true"
-      DATA_RETENTION_HOURS: "24"
-      DATA_CLEANUP_INTERVAL_MS: "86400000"
-      DISK_CHECK_INTERVAL_MS: "300000"
-      DISK_WARNING_PERCENT: "70"
-      DISK_CRITICAL_PERCENT: "85"
-
-    restart: unless-stopped
+      TZ: Asia/Shanghai
